@@ -1,0 +1,14 @@
+{
+  "name": "compiler",
+  "version": "1.0.0",
+  "description": "Compiler for MiniImp and MiniFun languages",
+  "license": "ISC",
+  "author": "Andrea Riolo Vinciguerra",
+  "type": "commonjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
