@@ -1,0 +1,18 @@
+def main with input n output steps as
+steps := 0;
+while not n < 2 do (
+    rem := n;
+    q := 0;
+    
+    while not rem < 2 do (
+        rem := rem - 2;
+        q := q + 1
+    );
+    
+    if rem < 1 then
+        n := q
+    else
+        n := n * 3 + 1;
+        
+    steps := steps + 1
+)

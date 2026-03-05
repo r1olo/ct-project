@@ -1,0 +1,14 @@
+def main with input n output c as
+c := 0;
+while 0 < n do (
+    q := 0;
+    rem := n;
+    
+    while not rem < 2 do (
+        q := q + 1;
+        rem := rem - 2
+    );
+    
+    c := c + rem;
+    n := q
+)

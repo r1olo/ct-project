@@ -1,0 +1,21 @@
+def main with input n output p as
+if n < 2 then
+    p := 0
+else (
+    p := 1;
+    i := 2;
+    
+    while i < n and not p < 1 do (
+        rem := n;
+        
+        while not rem < i do
+            rem := rem - i;
+        
+        if rem < 1 then
+            p := 0
+        else
+            skip;
+            
+        i := i + 1
+    )
+)

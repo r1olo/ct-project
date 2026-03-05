@@ -1,0 +1,6 @@
+def main with input x output y as
+y := x * 2;
+if y < 10 then 
+    y := y + 1 
+else 
+    y := y - 1

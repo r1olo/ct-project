@@ -1,0 +1,7 @@
+def main with input x output y as
+y := 0;
+n := x;
+while 0 < n do (
+    y := y + 1;
+    n := n - 1
+)

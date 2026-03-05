@@ -1,5 +1,5 @@
 /*
-*   MiniImp language compiler
+*   MiniImp language evaluator
 *   by Andrea Riolo Vinciguerra
 */
 
@@ -113,8 +113,8 @@ export function evalCmd(cmd: Cmd, mem: Memory): void {
     }
 }
 
-/* execute a whole program and return the result in the "out" identifier */
-export function execProg(prog: Prog, input: number, mem: Memory): number {
+/* eval a whole program and return the result in the "out" identifier */
+export function evalProg(prog: Prog, input: number, mem: Memory): number {
     /* set up memory with our input argument */
     mem.update(prog.in, input);
 
@@ -123,7 +123,27 @@ export function execProg(prog: Prog, input: number, mem: Memory): number {
 
     /* extract computed out value */
     let ret = mem.read(prog.out);
-    if (ret == undefined)
+    if (ret === undefined)
         throw new EvalError(`output variable '${prog.out}' is unbound`);
     return ret;
+}
+
+/* example function to execute a program with a standard memory */
+export default function execProg(prog: Prog, input: number): number {
+    /* create an example memory */
+    const mem = new class implements Memory {
+        private map: Record<string, number>;
+        constructor() {
+            this.map = {};
+        }
+        update(id: Identifier, num: number): void {
+            this.map[id] = num;
+        }
+        read(id: Identifier): number | undefined {
+            return this.map[id];
+        }
+    }
+
+    /* eval program with this memory */
+    return evalProg(prog, input, mem);
 }

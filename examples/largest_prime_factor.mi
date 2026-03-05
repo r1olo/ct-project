@@ -1,0 +1,22 @@
+def main with input n output lpf as
+lpf := 0;
+i := 2;
+while not n < i do (
+    rem := n;
+    while not rem < i do
+        rem := rem - i;
+        
+    if rem < 1 then (
+        lpf := i;
+        q := 0;
+        rem2 := n;
+        
+        while not rem2 < i do (
+            rem2 := rem2 - i;
+            q := q + 1
+        );
+        n := q
+    ) else (
+        i := i + 1
+    )
+)
