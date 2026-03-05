@@ -153,7 +153,7 @@ export function evalExpr(expr: Expr, env: Environment): Value {
 }
 
 export default function execProg(expr: Expr): Value {
-    let env = new class Env implements Environment {
+    let env = new class EnvImpl implements Environment {
         constructor(
             private readonly id: Identifier | null = null,
             private readonly val: Value | null = null,
@@ -161,7 +161,7 @@ export default function execProg(expr: Expr): Value {
         ) {}
 
         with(id: Identifier, val: Value): Environment {
-            return new Env(id, val, this);
+            return new EnvImpl(id, val, this);
         }
 
         read(id: Identifier): Value | undefined {

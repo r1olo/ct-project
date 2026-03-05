@@ -1,6 +1,51 @@
-import parse from "./minifun/parser"
-import execProg from "./minifun/engine"
+import * as readline from "readline";
+import parse from "./minifun/parser";
+import execProg, { Value } from "./minifun/engine";
 
-let src = "let a = 1 in let b = 1 in (fun y => y + a) 6";
-let result = execProg(parse(src));
-console.log(`Result: ${result}`);
+/* initialize readline interface */
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: "minifun# "
+});
+
+console.log("Welcome to MiniFun's interactive environment.");
+console.log("Type your expression and press Enter to evaluate.");
+console.log("Press Ctrl+C or type 'exit' to quit.\n");
+
+rl.prompt();
+
+rl.on("line", (line) => {
+    const source = line.trim();
+
+    /* handle exit commands */
+    if (source === "exit" || source === "quit") {
+        rl.close();
+        return;
+    }
+
+    /* only process if the user actually typed something */
+    if (source) {
+        try {
+            const ast = parse(source);
+            const result = execProg(ast);
+
+            /* format the output. if it's a closure, print <fun> */
+            if (typeof result === "object" && result !== null && "arg" in result) {
+                console.log("- : <fun>");
+            } else {
+                console.log(`- : ${result}`);
+            }
+        } catch (err: any) {
+            /* catch parse and eval errors without crashing the REPL
+             * (print in red) */
+            console.error(`\x1b[31m${err.message}\x1b[0m`);
+        }
+    }
+
+    /* reprompt for next line */
+    rl.prompt();
+}).on("close", () => {
+    console.log("\nGoodbye!");
+    process.exit(0);
+});
