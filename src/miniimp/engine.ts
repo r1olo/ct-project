@@ -3,13 +3,7 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-/* evaluation error */
-export class EvalError extends Error {
-    constructor(msg: string) {
-        super(msg);
-        this.name = "EvalError";
-    }
-}
+import { EvalError } from "../errors";
 
 /* custom identiifer type for modularity */
 export type Identifier = string;

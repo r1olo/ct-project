@@ -4,13 +4,7 @@
 */
 
 import { BoolExpr, Cmd, NumExpr, Prog } from "./engine";
-
-export class ParseError extends Error {
-    constructor(msg: string) {
-        super(msg);
-        this.name = "ParseError";
-    }
-}
+import { ParseError } from "../errors";
 
 /* these are the various tokens provided by our language */
 export type TokenType =
@@ -300,6 +294,13 @@ export class Parser {
     }
 
     private parseFactor(): NumExpr {
+        /* support factors inside parentheses as whole numeric expressions */
+        if (this.match("LPAREN")) {
+            let expr = this.parseNumExpr();
+            this.consume("RPAREN", "expected ')' after numeric expression");
+            return expr;
+        }
+
         /* scalar or identifier */
         if (this.match("INT"))
             return { type: "val", v: parseInt(this.previous().literal, 10) };
@@ -310,6 +311,7 @@ export class Parser {
     }
 
     private match(...types: TokenType[]): boolean {
+        /* match one or more tokens */
         for (const type of types) {
             if (this.check(type)) {
                 this.advance();
@@ -320,36 +322,43 @@ export class Parser {
     }
 
     private check(type: TokenType): boolean {
+        /* check if token is of type 'type' */
         if (this.isAtEnd())
             return false;
         return this.peek().type === type;
     }
 
     private advance(): Token {
+        /* return current token and advance */
         if (!this.isAtEnd())
             this.current++;
         return this.previous();
     }
 
     private isAtEnd(): boolean {
+        /* are we at the end of the token stream? */
         return this.peek().type === "EOF";
     }
 
     private peek(): Token {
+        /* peek current token */
         return this.tokens[this.current]!;
     }
 
     private previous(): Token {
+        /* peek previous token */
         return this.tokens[this.current - 1]!;
     }
 
     private consume(type: TokenType, msg: string): Token {
+        /* consume one token of type 'type' and advance */
         if (this.check(type))
             return this.advance();
         throw this.error(this.peek(), msg);
     }
 
     private error(token: Token, msg: string): ParseError {
+        /* quick error wrapper */
         return new ParseError(`[line ${token.line}] error at ` +
                               `'${token.literal}': ${msg}`)
     }
