@@ -109,7 +109,7 @@ function applySubstCtx(s: Substitution, ctx: Context): Context {
 }
 
 /* return a composited substitution by chaining multiple substitutions.
- * example: composeSubsts(s4, s3, s2, s1) = s4(s3(s2(s1))) */
+ * example: composeSubst(s4, s3, s2, s1) = s4(s3(s2(s1))) */
 function composeSubst(...substs: Substitution[]): Substitution {
     /* base cases: nothing to compose */
     if (substs.length === 0)
@@ -406,7 +406,10 @@ export function validateExpr(expr: Expr, ctx: Context,
 
             /* third argument
              * TODO: check for slides error. S2S1CTX must be validated, not
-             * S2CTX*/
+             * S2CTX. indeed, it crashes with this program:
+             * let myfun = fun x => if (x 0 < 1) then 0 else (x + 1) in
+             * myfun (fun x => 2)
+             * value [object Object] is not number */
             let { subst: s3, mono: t3 } = validateExpr(expr.else,
                             applySubstCtx(composeSubst(s2, s1), ctx), factory);
 
@@ -429,11 +432,9 @@ export function validateExpr(expr: Expr, ctx: Context,
             let { subst: s1, mono: t1 } = validateExpr(expr.e, ctx, factory);
 
             /* generate a new context where the argument identifier is
-             * assigned the generalized polytype of the expression t1.
-             * TODO: check for slides error: S1T1 must be generalized instead
-             * of T1 */
+             * assigned the generalized polytype of the expression t1. */
             let newCtx = applySubstCtx(s1, ctx);
-            newCtx = newCtx.with(expr.i, gener(newCtx, applySubstMono(s1, t1)));
+            newCtx = newCtx.with(expr.i, gener(newCtx, t1));
 
             /* the let body with the new context. the argument may be
              * instantited if its polytype has bound variables (generics) */
@@ -480,7 +481,6 @@ export function validateExpr(expr: Expr, ctx: Context,
 }
 
 export default function checkProg(expr: Expr): PolyType {
-    /* TODO */
     let context = new class CtxImpl implements Context {
         private map: Map<Identifier, PolyType>;
 
