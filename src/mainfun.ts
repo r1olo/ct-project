@@ -1,64 +1,111 @@
 import * as readline from "readline";
+import * as fs from "fs";
 import parse from "./minifun/parser";
-import execProg, { Value } from "./minifun/engine";
+import execProg from "./minifun/engine";
 import checkProg, { formatType } from "./minifun/validator";
 import { DiagnosticError } from "./minifun/diag";
 
-/* initialize readline interface */
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "minifun# "
-});
+/* core eval function */
+function evaluateSource(source: string) {
+    try {
+        /* parse the source code */
+        const ast = parse(source);
 
-console.log("Welcome to MiniFun's interactive environment.");
-console.log("Copyright 2026-2026 Andrea Riolo Vinciguerra.\n");
-console.log("Type your expression and press Enter to evaluate.");
-console.log("Press Ctrl+C or type 'exit' to quit.\n");
+        /* static analysis */
+        const principalType = checkProg(ast);
+        const typeSignature = formatType(principalType);
 
-rl.prompt();
+        /* eval phase */
+        const result = execProg(ast);
 
-rl.on("line", (line) => {
-    const source = line.trim();
-
-    /* handle exit commands */
-    if (source === "exit" || source === "quit") {
-        rl.close();
-        return;
+        /* format the output. if it's a closure, print <fun> */
+        if (typeof result === "object" && result !== null && "arg" in result) {
+            console.log(`- : ${typeSignature} = <fun>`);
+        } else {
+            console.log(`- : ${typeSignature} = ${result}`);
+        }
+    } catch (err: any) {
+        /* catch parse and eval errors without crashing the REPL */
+        if (err instanceof DiagnosticError) {
+            console.error(err.format(source));
+        } else {
+            console.error(`\x1b[31m${err.message}\x1b[0m`);
+        }
     }
+}
 
-    /* only process if the user actually typed something */
-    if (source) {
+/* cli argument passing */
+const args = process.argv.slice(2);
+let runInteractive = false;
+let filePath: string | undefined = undefined;
+const noFlags = args.length === 0;
+
+for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-i") {
+        runInteractive = true;
+    } else if (args[i] === "-f") {
+        if (i + 1 < args.length) {
+            filePath = args[++i];
+        } else {
+            console.error("\x1b[31mError: -f flag requires a file path.\x1b[0m");
+            process.exit(1);
+        }
+    }
+}
+
+/* execution flow */
+if (noFlags) {
+    /* no flags passed: Read entirely from stdin (e.g., piped data),
+     * evaluate, and exit */
+    let source = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => source += chunk);
+    process.stdin.on("end", () => {
+        if (source.trim()) evaluateSource(source.trim());
+    });
+} else {
+    /* file evaluation phase */
+    if (filePath) {
         try {
-            /* parse the source code */
-            const ast = parse(source);
-
-            /* static analysis */
-            const principalType = checkProg(ast);
-            const typeSignature = formatType(principalType);
-
-            /* eval phase */
-            const result = execProg(ast);
-
-            /* format the output. if it's a closure, print <fun> */
-            if (typeof result === "object" && result !== null && "arg" in result) {
-                console.log(`- : ${typeSignature} = <fun>`);
-            } else {
-                console.log(`- : ${typeSignature} = ${result}`);
-            }
+            const source = fs.readFileSync(filePath, "utf8");
+            evaluateSource(source.trim());
         } catch (err: any) {
-            /* catch parse and eval errors without crashing the REPL
-             * (print in red) */
-            if (err instanceof DiagnosticError)
-                console.error(err.format(source));
-            else
-                console.error(`\x1b[31m${err.message}\x1b[0m`);
+            console.error(`\x1b[31mError reading file '${filePath}': ${err.message}\x1b[0m`);
+            process.exit(1);
         }
     }
 
-    /* reprompt for next line */
-    rl.prompt();
-}).on("close", () => {
-    console.log("\nGoodbye!");
-    process.exit(0);
-});
+    /* interactive REPL phase */
+    if (runInteractive) {
+        console.log("Welcome to MiniFun's interactive environment.");
+        console.log("Copyright 2026-2026 Andrea Riolo Vinciguerra.\n");
+        console.log("Type your expression and press Enter to evaluate.");
+        console.log("Press Ctrl+C or type 'exit' to quit.\n");
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            prompt: "minifun# "
+        });
+
+        rl.prompt();
+
+        rl.on("line", (line) => {
+            const source = line.trim();
+
+            if (source === "exit" || source === "quit") {
+                rl.close();
+                return;
+            }
+
+            if (source) {
+                evaluateSource(source);
+            }
+
+            rl.prompt();
+        }).on("close", () => {
+            console.log("\nGoodbye!");
+            process.exit(0);
+        });
+    }
+}

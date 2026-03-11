@@ -1,0 +1,31 @@
+letfun mod n = fun d =>
+    if (n < d) then n 
+    else mod (n - d) d
+in
+
+letfun check_prime n = fun d =>
+    if (n < ((d * d))) then true
+    else if ((mod n d) < 1) then false
+    else check_prime n (d + 1)
+in
+
+letfun is_prime n =
+    if (n < 2) then false 
+    else check_prime n 2
+in
+
+letfun sum_primes n =
+    if (n < 2) then 0
+    else if (is_prime n) then n + (sum_primes (n - 1))
+    else sum_primes (n - 1)
+in
+
+let twice = fun f => fun x => f (f x) in
+
+let add_two = twice (fun x => x + 1) in
+let is_still_true = twice (fun b => b && true) in
+
+if (is_still_true true) then 
+    add_two (sum_primes 15)
+else 
+    0

@@ -325,6 +325,7 @@ function extractVars(expr: Expr): Set<string> {
 /* quickly get a list of notes for all the variables defined */
 function getVariableNotes(expr: Expr, ctx: Context): string[] {
     let ret: string[] = [];
+    let counter = 0;
     for (const id of extractVars(expr)) {
         let content = ctx.read(id);
         if (content === undefined)
@@ -367,8 +368,8 @@ export function formatType(t: MonoType | PolyType,
             return "bool";
         case "var":
             /* use the mapped letter if it's a bound generic, else keep
-             * original*/
-            return varMap.get(t.name) || t.name;
+             * original */
+            return varMap.get(t.name) || "generic";
         case "fun":
             /* pass the map down the tree */
             let argStr = t.arg.type === "fun" ? `(${formatType(t.arg, varMap)})` :
