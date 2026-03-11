@@ -4,6 +4,7 @@
 */
 
 import { BinOp, Expr, TypeLabel } from "./engine";
+import { SourceSpan } from "./diag";
 import { ParseError } from "../errors";
 
 export type TokenType =
@@ -21,10 +22,12 @@ export type TokenType =
     /* literals and EOF */
     | "ID" | "INT" | "EOF";
 
+/* the token type. it includes info like line and column for diagnostics */
 export type Token = {
     type: TokenType,
     literal: string,
     line: number,
+    col: number,
 };
 
 const KEYWORDS: Record<string, TokenType> = {
@@ -45,6 +48,7 @@ export function tokenize(source: string): Token[] {
     const tokens: Token[] = [];
     let current = 0;
     let line = 1;
+    let col = 0;
 
     while (current < source.length) {
         let char = source[current]!;
@@ -52,6 +56,7 @@ export function tokenize(source: string): Token[] {
         /* handle whitespace */
         if (char === ' ' || char === '\r' || char === '\t') {
             current++;
+            col++;
             continue;
         }
 
@@ -59,100 +64,117 @@ export function tokenize(source: string): Token[] {
         if (char === '\n') {
             line++;
             current++;
+            col = 0;
             continue;
         }
 
         /* handle symbols */
         if (char === '=' && source[current + 1] === '>') {
-            tokens.push({ type: "ARROW", literal: ">=", line });
+            tokens.push({ type: "ARROW", literal: ">=", line, col });
             current += 2;
+            col += 2;
             continue;
         }
         if (char === '&' && source[current + 1] === '&') {
-            tokens.push({ type: "AND", literal: "&&", line });
+            tokens.push({ type: "AND", literal: "&&", line, col });
             current += 2;
+            col += 2;
             continue;
         }
         if (char === '-' && source[current + 1] === '>') {
-            tokens.push({ type: "TYPE_ARROW", literal: "->", line });
+            tokens.push({ type: "TYPE_ARROW", literal: "->", line, col });
             current += 2;
+            col += 2;
             continue;
         }
         if (char === '=') {
-            tokens.push({ type: "EQ", literal: "=", line });
+            tokens.push({ type: "EQ", literal: "=", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '+') {
-            tokens.push({ type: "PLUS", literal: "+", line });
+            tokens.push({ type: "PLUS", literal: "+", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '-') {
-            tokens.push({ type: "MINUS", literal: "-", line });
+            tokens.push({ type: "MINUS", literal: "-", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '*') {
-            tokens.push({ type: "STAR", literal: "*", line });
+            tokens.push({ type: "STAR", literal: "*", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '<') {
-            tokens.push({ type: "LT", literal: "<", line });
+            tokens.push({ type: "LT", literal: "<", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '~') {
-            tokens.push({ type: "NOT", literal: "~", line });
+            tokens.push({ type: "NOT", literal: "~", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === '(') {
-            tokens.push({ type: "LPAREN", literal: "(", line });
+            tokens.push({ type: "LPAREN", literal: "(", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === ')') {
-            tokens.push({ type: "RPAREN", literal: ")", line });
+            tokens.push({ type: "RPAREN", literal: ")", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === ':') {
-            tokens.push({ type: "COLON", literal: ":", line });
+            tokens.push({ type: "COLON", literal: ":", line, col });
             current++;
+            col++;
             continue;
         }
 
         /* handle identifiers and keywords */
         if (/[a-zA-Z_]/.test(char)) {
             let start = current;
+            let startCol = col;
             while (current < source.length &&
                   /[a-zA-Z0-9_]/.test(source[current]!)) {
                 current++;
+                col++;
             }
             let text = source.substring(start, current);
             let type = KEYWORDS[text] || "ID";
-            tokens.push({ type, literal: text, line });
+            tokens.push({ type, literal: text, line, col: startCol });
             continue;
         }
 
         /* handle integers */
         if (/[0-9]/.test(char)) {
             let start = current;
+            let startCol = col;
             while (current < source.length &&
                   /[0-9]/.test(source[current]!)) {
                 current++;
+                col++;
             }
             let text = source.substring(start, current);
-            tokens.push({ type: "INT", literal: text, line });
+            tokens.push({ type: "INT", literal: text, line, col: startCol });
             continue;
         }
 
         throw new ParseError(`unexpected character '${char}' at line ${line}`);
     }
 
-    tokens.push({ type: "EOF", literal: "", line });
+    tokens.push({ type: "EOF", literal: "", line, col });
     return tokens;
 }
 
@@ -174,6 +196,9 @@ export class Parser {
     /* top-level expressions: let, letfun, fun, if. these have the lowest
      * precedence */
     private parseExpr(): Expr {
+        /* start token for span creation */
+        let startToken = this.peek();
+
         /* letfun expression */
         if (this.match("LETFUN")) {
             let id = this.consume("ID", "expected function name").literal;
@@ -188,7 +213,15 @@ export class Parser {
             let body = this.parseExpr();
             this.consume("IN", "expected 'in' keyword");
             let inExpr = this.parseExpr();
-            return { type: "letfun", i: id, arg, retType, body, in: inExpr };
+            return {
+                type: "letfun",
+                i: id,
+                arg,
+                retType,
+                body,
+                in: inExpr,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* let expression */
@@ -198,7 +231,13 @@ export class Parser {
             let e = this.parseExpr();
             this.consume("IN", "expected 'in' keyword");
             let inExpr = this.parseExpr();
-            return { type: "let", i: id, e, in: inExpr };
+            return {
+                type: "let",
+                i: id,
+                e,
+                in: inExpr,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* fun expression */
@@ -212,7 +251,13 @@ export class Parser {
 
             this.consume("ARROW", "expected '=>'");
             let body = this.parseExpr();
-            return { type: "fun", arg, argType, body };
+            return {
+                type: "fun",
+                arg,
+                argType,
+                body,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* if expression */
@@ -222,7 +267,13 @@ export class Parser {
             let thenExpr = this.parseExpr();
             this.consume("ELSE", "expected 'else'");
             let elseExpr = this.parseExpr();
-            return { type: "if", cond, then: thenExpr, else: elseExpr };
+            return {
+                type: "if",
+                cond,
+                then: thenExpr,
+                else: elseExpr,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* lowest precedence (AND) to highest precedence (UNARY) */
@@ -234,7 +285,8 @@ export class Parser {
         let left = this.parseCmp();
         while (this.match("AND")) {
             let right = this.parseCmp();
-            left = { type: "op", op: "and", a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "op", op: "and", a: left, b: right, span };
         }
         return left;
     }
@@ -244,7 +296,8 @@ export class Parser {
         let left = this.parseAddSub();
         while (this.match("LT")) {
             let right = this.parseAddSub();
-            left = { type: "op", op: "lt", a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "op", op: "lt", a: left, b: right, span };
         }
         return left;
     }
@@ -256,7 +309,8 @@ export class Parser {
             let operator = this.advance();
             let right = this.parseMul();
             let op: BinOp = operator.type === "PLUS" ? "add" : "sub";
-            left = { type: "op", op, a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "op", op, a: left, b: right, span };
         }
         return left;
     }
@@ -266,7 +320,8 @@ export class Parser {
         let left = this.parseApply();
         while (this.match("STAR")) {
             let right = this.parseApply();
-            left = { type: "op", op: "mul", a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "op", op: "mul", a: left, b: right, span };
         }
         return left;
     }
@@ -276,10 +331,11 @@ export class Parser {
         let expr = this.parseNot();
 
         /* keep wrapping in call as long as the next token represents a base
-         * expression start */
+         * expression start. merge the function expr with the arg expr */
         while (this.isApplyStart()) {
             let arg = this.parseNot();
-            expr = { type: "call", f: expr, arg };
+            let span = this.mergeSpans(expr.span, arg.span);
+            expr = { type: "call", f: expr, arg, span };
         }
 
         return expr;
@@ -287,8 +343,15 @@ export class Parser {
 
     /* unary NOT (highest precedence) */
     private parseNot(): Expr {
+        /* starting token for the expression */
+        let startToken = this.peek();
+
         if (this.match("NOT"))
-            return { type: "not", e: this.parseNot() };
+            return {
+                type: "not",
+                e: this.parseNot(),
+                span: this.makeSpan(startToken, this.previous())
+            };
         return this.parseBase();
     }
 
@@ -304,22 +367,44 @@ export class Parser {
 
     /* base expressions: literals, variables, parentheses */
     private parseBase(): Expr {
+        /* starting token for the expression */
+        let startToken = this.peek();
+
         /* if base term is wrapped in parentheses, it is a whole expr */
         if (this.match("LPAREN")) {
             let expr = this.parseExpr();
             this.consume("RPAREN", "expected ')'");
+
+            /* update the span to include the parentheses */
+            expr.span = this.makeSpan(startToken, this.previous());
             return expr;
         }
 
         /* base stuff */
         if (this.match("TRUE"))
-            return { type: "val", v: true };
+            return {
+                type: "val",
+                v: true,
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("FALSE"))
-            return { type: "val", v: false };
+            return {
+                type: "val",
+                v: false,
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("INT"))
-            return { type: "val", v: parseInt(this.previous().literal) };
+            return {
+                type: "val",
+                v: parseInt(this.previous().literal),
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("ID"))
-            return { type: "id", i: this.previous().literal };
+            return {
+                type: "id",
+                i: this.previous().literal,
+                span: this.makeSpan(startToken, this.previous())
+            };
 
         throw this.error(this.peek(), "expected expression");
     }
@@ -351,6 +436,20 @@ export class Parser {
             return { type: "bool" };
 
         throw this.error(this.peek(), "expected type ('int') or ('bool')");
+    }
+
+    /* make a SourceSpan out of two tokens */
+    private makeSpan(start: Token, end: Token): SourceSpan {
+        /* the end column must include the length of the token itself */
+        return {
+            start: { line: start.line, col: start.col },
+            end: { line: end.line, col: end.col + end.literal.length }
+        }
+    }
+
+    /* merge two SourceSpans, for example in binary ops */
+    private mergeSpans(left: SourceSpan, right: SourceSpan): SourceSpan {
+        return { start: left.start, end: right.end };
     }
 
     private match(...types: TokenType[]): boolean {

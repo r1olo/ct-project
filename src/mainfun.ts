@@ -2,6 +2,7 @@ import * as readline from "readline";
 import parse from "./minifun/parser";
 import execProg, { Value } from "./minifun/engine";
 import checkProg, { formatType } from "./minifun/validator";
+import { DiagnosticError } from "./minifun/diag";
 
 /* initialize readline interface */
 const rl = readline.createInterface({
@@ -11,6 +12,7 @@ const rl = readline.createInterface({
 });
 
 console.log("Welcome to MiniFun's interactive environment.");
+console.log("Copyright 2026-2026 Andrea Riolo Vinciguerra.\n");
 console.log("Type your expression and press Enter to evaluate.");
 console.log("Press Ctrl+C or type 'exit' to quit.\n");
 
@@ -47,7 +49,10 @@ rl.on("line", (line) => {
         } catch (err: any) {
             /* catch parse and eval errors without crashing the REPL
              * (print in red) */
-            console.error(`\x1b[31m${err.message}\x1b[0m`);
+            if (err instanceof DiagnosticError)
+                console.error(err.format(source));
+            else
+                console.error(`\x1b[31m${err.message}\x1b[0m`);
         }
     }
 

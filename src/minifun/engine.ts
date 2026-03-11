@@ -3,7 +3,8 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { EvalError } from "../errors";
+import { RuntimeError } from "../errors";
+import { SourceSpan } from "./diag";
 
 /* identifier type */
 export type Identifier = string;
@@ -29,16 +30,20 @@ export type TypeLabel =
 
 /* the expression to be evaluated */
 export type Expr =
-    | { type: "val",    v: Value                                                   }
-    | { type: "id",     i: Identifier                                              }
-    | { type: "fun",    arg: Identifier, argType?: TypeLabel, body: Expr           }
-    | { type: "call",   f: Expr,         arg: Expr                                 }
-    | { type: "op",     op: BinOp,       a: Expr,             b: Expr              }
-    | { type: "not",    e: Expr                                                    }
-    | { type: "if",     cond: Expr,      then: Expr,          else: Expr           }
-    | { type: "let",    i: Identifier,   e: Expr,             in: Expr             }
+    | { type: "val",    v: Value,        span: SourceSpan                          }
+    | { type: "id",     i: Identifier,   span: SourceSpan                          }
+    | { type: "fun",    arg: Identifier, argType?: TypeLabel, body: Expr,
+                        span: SourceSpan                                           }
+    | { type: "call",   f: Expr,         arg: Expr,           span: SourceSpan     }
+    | { type: "op",     op: BinOp,       a: Expr,             b: Expr,
+                        span: SourceSpan                                           }
+    | { type: "not",    e: Expr,         span: SourceSpan                          }
+    | { type: "if",     cond: Expr,      then: Expr,          else: Expr,
+                        span: SourceSpan                                           }
+    | { type: "let",    i: Identifier,   e: Expr,             in: Expr,
+                        span: SourceSpan                                           }
     | { type: "letfun", i: Identifier,   arg: Identifier,     retType?: TypeLabel,
-                        body: Expr,      in: Expr                                  }
+                        body: Expr,      in: Expr,            span: SourceSpan     };
 
 /* our environment (TODO: how about using a map???) */
 export interface Environment {
@@ -52,29 +57,30 @@ export interface Environment {
 /* helpers to quickly assert that a value is a certain type. this is not part
  * of the type checking system, but is required by the evaluator in case of
  * runtime errors (which should not happen given proper typing) */
-function asBool(v: Value): boolean {
+function assertBool(v: Value): asserts v is boolean {
+    /* TODO LINE SPECIFIER */
     if (typeof v !== "boolean")
-        throw new EvalError(`value ${v} is not boolean`);
-    return v;
+        throw new RuntimeError(`value ${v} is not boolean`);
 }
 
-function asNumber(v: Value): number {
+function assertNumber(v: Value): asserts v is number {
+    /* TODO LINE SPECIFIER */
     if (typeof v !== "number")
-        throw new EvalError(`value ${v} is not number`);
-    return v;
+        throw new RuntimeError(`value ${v} is not number`);
 }
 
-function asClosure(v: Value): Closure {
+function assertClosure(v: Value): asserts v is Closure {
+    /* TODO LINE SPECIFIER */
     if (v === null || typeof v !== "object")
-        throw new EvalError(`value ${v} is not a closure`);
-    return v;
+        throw new RuntimeError(`value ${v} is not a closure`);
 }
 
 /* fetch value from environment or error out */
 function readValue(id: Identifier, env: Environment): Value {
+    /* TODO LINE SPECIFIER */
     let val = env.read(id);
     if (val === undefined)
-        throw new EvalError(`unbound variable '${id}'`);
+        throw new RuntimeError(`unbound variable '${id}'`);
     return val;
 }
 
@@ -82,15 +88,25 @@ function readValue(id: Identifier, env: Environment): Value {
 function binaryOp(op: BinOp, a: Value, b: Value): Value {
     switch (op) {
         case "add":
-            return asNumber(a) + asNumber(b);
+            assertNumber(a);
+            assertNumber(b);
+            return a + b;
         case "sub":
-            return asNumber(a) - asNumber(b);
+            assertNumber(a);
+            assertNumber(b);
+            return a - b;
         case "mul":
-            return asNumber(a) * asNumber(b);
+            assertNumber(a);
+            assertNumber(b);
+            return a * b;
         case "and":
-            return asBool(a) && asBool(b);
+            assertBool(a);
+            assertBool(b);
+            return a && b;
         case "lt":
-            return asNumber(a) < asNumber(b);
+            assertNumber(a);
+            assertNumber(b);
+            return a < b;
     }
 }
 
@@ -111,7 +127,8 @@ export function evalExpr(expr: Expr, env: Environment): Value {
         }
         case "call": {
             /* extract closure */
-            let fun = asClosure(evalExpr(expr.f, env));
+            let fun = evalExpr(expr.f, env);
+            assertClosure(fun);
 
             /* grab function's environment and assign the arg to its var */
             let newEnv = fun.env.with(fun.arg, evalExpr(expr.arg, env));
@@ -122,10 +139,14 @@ export function evalExpr(expr: Expr, env: Environment): Value {
         case "op":
             return binaryOp(expr.op, evalExpr(expr.a, env),
                             evalExpr(expr.b, env));
-        case "not":
-            return !asBool(evalExpr(expr.e, env));
+        case "not": {
+            let v = evalExpr(expr.e, env);
+            assertBool(v);
+            return !v;
+        }
         case "if": {
-            let cond = asBool(evalExpr(expr.cond, env));
+            let cond = evalExpr(expr.cond, env);
+            assertBool(cond);
             if (cond)
                 return evalExpr(expr.then, env);
             return evalExpr(expr.else, env);
