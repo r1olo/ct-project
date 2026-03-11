@@ -21,17 +21,24 @@ export type Value = number | boolean | Closure;
 /* available binary operators */
 export type BinOp = "add" | "sub" | "mul" | "and" | "lt";
 
+/* type annotation node for AST */
+export type TypeLabel =
+    | { type: "int" }
+    | { type: "bool" }
+    | { type: "fun", arg: TypeLabel, ret: TypeLabel };
+
 /* the expression to be evaluated */
 export type Expr =
-    | { type: "val",    v: Value                                                }
-    | { type: "id",     i: Identifier                                           }
-    | { type: "fun",    arg: Identifier, body: Expr                             }
-    | { type: "call",   f: Expr,         arg: Expr                              }
-    | { type: "op",     op: BinOp,       a: Expr,         b: Expr               }
-    | { type: "not",    e: Expr                                                 }
-    | { type: "if",     cond: Expr,      then: Expr,      else: Expr            }
-    | { type: "let",    i: Identifier,   e: Expr,         in: Expr              }
-    | { type: "letfun", i: Identifier,   arg: Identifier, body: Expr, in: Expr  }
+    | { type: "val",    v: Value                                                   }
+    | { type: "id",     i: Identifier                                              }
+    | { type: "fun",    arg: Identifier, argType?: TypeLabel, body: Expr           }
+    | { type: "call",   f: Expr,         arg: Expr                                 }
+    | { type: "op",     op: BinOp,       a: Expr,             b: Expr              }
+    | { type: "not",    e: Expr                                                    }
+    | { type: "if",     cond: Expr,      then: Expr,          else: Expr           }
+    | { type: "let",    i: Identifier,   e: Expr,             in: Expr             }
+    | { type: "letfun", i: Identifier,   arg: Identifier,     retType?: TypeLabel,
+                        body: Expr,      in: Expr                                  }
 
 /* our environment (TODO: how about using a map???) */
 export interface Environment {

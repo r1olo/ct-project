@@ -3,7 +3,7 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { Expr, Identifier } from "./engine";
+import { Expr, Identifier, TypeLabel } from "./engine";
 import { TypeError } from "../errors";
 
 /* a single well-defined type (possibly generic) */
@@ -61,6 +61,22 @@ function freshVarFactory(): FreshVarFactory {
         freshMonoVar: function(): MonoType {
             return { type: "var", name: this.freshVar() };
         }
+    }
+}
+
+/* quickly convert a type annotation into a monotype */
+function labelToMono(label: TypeLabel): MonoType {
+    switch (label.type) {
+        case "int":
+            return { type: "int" };
+        case "bool":
+            return { type: "bool" };
+        case "fun":
+            return {
+                type: "fun",
+                arg: labelToMono(label.arg),
+                ret: labelToMono(label.ret)
+            };
     }
 }
 
@@ -320,8 +336,9 @@ export function validateExpr(expr: Expr, ctx: Context,
             return { subst: emptySubst, mono: inst(poly, factory) };
         }
         case "fun": {
-            /* TODO: use annotation if provided, else fresh var */
-            let argType = factory.freshMonoVar();
+            /* use annotation if provided, else fresh var */
+            let argType = expr.argType ? labelToMono(expr.argType) :
+                factory.freshMonoVar();
             let newCtx = ctx.with(expr.arg, { bound: new Set(), mono: argType });
 
             /* validate the function body in the new context */
@@ -463,6 +480,14 @@ export function validateExpr(expr: Expr, ctx: Context,
                 ret: t1
             };
             let s2 = unify(applySubstMono(s1, freshF), expectedFun);
+
+            /* we must make sure that the expected function type unifies with our
+             * type annotation, combining the resulting substitutions */
+            if (expr.retType) {
+                let annotatedType = labelToMono(expr.retType);
+                let sLabel = unify(expectedFun, annotatedType);
+                s2 = composeSubst(sLabel, s2);
+            }
 
             /* check the body of the let */
             let s2s1 = composeSubst(s2, s1);

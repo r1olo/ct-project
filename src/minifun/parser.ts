@@ -3,7 +3,7 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { BinOp, Expr } from "./engine";
+import { BinOp, Expr, TypeLabel } from "./engine";
 import { ParseError } from "../errors";
 
 export type TokenType =
@@ -14,6 +14,9 @@ export type TokenType =
     /* symbols */
     | "ARROW"  | "EQ" | "PLUS" | "MINUS" | "STAR" | "AND" | "LT" | "NOT"
     | "LPAREN" | "RPAREN"
+
+    /* type annotations */
+    | "COLON" | "TYPE_ARROW" | "KW_INT" | "KW_BOOL"
 
     /* literals and EOF */
     | "ID" | "INT" | "EOF";
@@ -34,6 +37,8 @@ const KEYWORDS: Record<string, TokenType> = {
     "letfun": "LETFUN",
     "true": "TRUE",
     "false": "FALSE",
+    "int": "KW_INT",
+    "bool": "KW_BOOL",
 };
 
 export function tokenize(source: string): Token[] {
@@ -65,6 +70,11 @@ export function tokenize(source: string): Token[] {
         }
         if (char === '&' && source[current + 1] === '&') {
             tokens.push({ type: "AND", literal: "&&", line });
+            current += 2;
+            continue;
+        }
+        if (char === '-' && source[current + 1] === '>') {
+            tokens.push({ type: "TYPE_ARROW", literal: "->", line });
             current += 2;
             continue;
         }
@@ -105,6 +115,11 @@ export function tokenize(source: string): Token[] {
         }
         if (char === ')') {
             tokens.push({ type: "RPAREN", literal: ")", line });
+            current++;
+            continue;
+        }
+        if (char === ':') {
+            tokens.push({ type: "COLON", literal: ":", line });
             current++;
             continue;
         }
@@ -163,11 +178,17 @@ export class Parser {
         if (this.match("LETFUN")) {
             let id = this.consume("ID", "expected function name").literal;
             let arg = this.consume("ID", "expected argument name").literal;
+
+            /* check for type annotation */
+            let retType: TypeLabel | undefined;
+            if (this.match("COLON"))
+                retType = this.parseType();
+
             this.consume("EQ", "expected '=' after arguments");
             let body = this.parseExpr();
             this.consume("IN", "expected 'in' keyword");
             let inExpr = this.parseExpr();
-            return { type: "letfun", i: id, arg, body, in: inExpr };
+            return { type: "letfun", i: id, arg, retType, body, in: inExpr };
         }
 
         /* let expression */
@@ -183,9 +204,15 @@ export class Parser {
         /* fun expression */
         if (this.match("FUN")) {
             let arg = this.consume("ID", "expected argument name").literal;
+
+            /* check for type annotation */
+            let argType: TypeLabel | undefined;
+            if (this.match("COLON"))
+                argType = this.parseType();
+
             this.consume("ARROW", "expected '=>'");
             let body = this.parseExpr();
-            return { type: "fun", arg, body };
+            return { type: "fun", arg, argType, body };
         }
 
         /* if expression */
@@ -295,6 +322,35 @@ export class Parser {
             return { type: "id", i: this.previous().literal };
 
         throw this.error(this.peek(), "expected expression");
+    }
+
+    /* parse a type annotation and recursive on the left for functions
+     * (left-associativity, like multiplication scanning for factors) */
+    private parseType(): TypeLabel {
+        let left = this.parseTypeBase();
+        while (this.match("TYPE_ARROW")) {
+            let right = this.parseTypeBase();
+            left = { type: "fun", arg: left, ret: right };
+        }
+        return left;
+    }
+
+    /* base type annotation */
+    private parseTypeBase(): TypeLabel {
+        /* if wrapped in parentheses, this might be a whole subtype */
+        if (this.match("LPAREN")) {
+            let t = this.parseType();
+            this.consume("RPAREN", "expected ')' after type");
+            return t;
+        }
+
+        /* base stuff */
+        if (this.match("KW_INT"))
+            return { type: "int" };
+        if (this.match("KW_BOOL"))
+            return { type: "bool" };
+
+        throw this.error(this.peek(), "expected type ('int') or ('bool')");
     }
 
     private match(...types: TokenType[]): boolean {
