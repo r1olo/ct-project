@@ -125,7 +125,7 @@ export function evalProg(prog: Prog, input: number, mem: Memory): number {
 /* example function to execute a program with a standard memory */
 export default function execProg(prog: Prog, input: number): number {
     /* create an example memory */
-    const mem = new class implements Memory {
+    let mem = new class implements Memory {
         private map: Record<string, number>;
         constructor() {
             this.map = {};

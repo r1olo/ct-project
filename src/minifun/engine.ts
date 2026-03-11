@@ -33,7 +33,7 @@ export type Expr =
     | { type: "let",    i: Identifier,   e: Expr,         in: Expr              }
     | { type: "letfun", i: Identifier,   arg: Identifier, body: Expr, in: Expr  }
 
-/* our environment */
+/* our environment (TODO: how about using a map???) */
 export interface Environment {
     /* add a new identifier and return the new environment */
     with(id: Identifier, val: Value): Environment;
