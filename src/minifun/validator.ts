@@ -261,6 +261,23 @@ function unify(t1: MonoType, t2: MonoType, span: SourceSpan): Substitution {
     );
 }
 
+/* unify or throw a diagnostic error with custom msg (could be inside
+ * unify itself?) */
+function unify_or_error(t1: MonoType, t2: MonoType, span: SourceSpan,
+                        msg: string, ...notes: string[]): Substitution {
+
+    try {
+        return unify(t1, t2, span);
+    } catch (err: any) {
+        if (err instanceof DiagnosticError) {
+            err.msg = msg;
+            for (const note of notes)
+                err.notes.push(note);
+        }
+        throw err;
+    }
+}
+
 /* return a substitution where a particular type variable 'name' becomes
  * monotype 't'. this function checks for potential infinite loops, in the
  * case where the monotype references the var itself */
@@ -325,7 +342,6 @@ function extractVars(expr: Expr): Set<string> {
 /* quickly get a list of notes for all the variables defined */
 function getVariableNotes(expr: Expr, ctx: Context): string[] {
     let ret: string[] = [];
-    let counter = 0;
     for (const id of extractVars(expr)) {
         let content = ctx.read(id);
         if (content === undefined)
@@ -434,23 +450,14 @@ export function validateExpr(expr: Expr, ctx: Context,
 
             /* try to unify called function type with argument passed + fresh
              * return type */
-            let s3: Substitution;
-            try {
-                s3 = unify(applySubstMono(s2, t1),
-                           { type: "fun", arg: t2, ret: retType },
-                           expr.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    err.msg = `type mismatch in function call`;
-                    err.notes.push(`Function inferred as: ` +
-                                   `${formatType(applySubstMono(s2, t1))}`);
-                    err.notes.push(`Argument inferred as: ` +
-                                   `${formatType(t2)}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            let s3 = unify_or_error(
+                applySubstMono(s2, t1),
+                { type: "fun", arg: t2, ret: retType },
+                expr.span,
+                `type mismatch in function call`,
+                `Function inferred as: ${formatType(applySubstMono(s2, t1))}`,
+                `Argument inferred as: ${formatType(t2)}`
+           );
 
             /* return type as per algorithm W rules */
             return {
@@ -476,33 +483,27 @@ export function validateExpr(expr: Expr, ctx: Context,
                 retType = { type: "bool" };
             }
 
-            /* try to unify the arguments with the expected arg types */
-            let s3: Substitution, s4: Substitution;
-            try {
-                s3 = unify(applySubstMono(s2, t1), expectedArgType, expr.a.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    err.msg = `left operand of '${expr.op}' has incorrect type`;
-                    err.notes.push(`Expected: ${formatType(expectedArgType)}, ` +
-                                   `got: ${formatType(applySubstMono(s2, t1))}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            /* unify left argument */
+            let s3 = unify_or_error(
+                applySubstMono(s2, t1),
+                expectedArgType,
+                expr.a.span,
+                `left operand of '${expr.op}' has incorrect type`,
+                `Expected: ${formatType(expectedArgType)}, got: ` +
+                    `${formatType(applySubstMono(s2, t1))}`,
+                ...getVariableNotes(expr.a, ctx)
+            );
 
-            try {
-                s4 = unify(applySubstMono(s3, t2), expectedArgType, expr.b.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    err.msg = `right operand of '${expr.op}' has incorrect type`;
-                    err.notes.push(`Expected: ${formatType(expectedArgType)}, ` +
-                                   `got: ${formatType(applySubstMono(s3, t2))}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            /* unify right argument */
+            let s4 = unify_or_error(
+                applySubstMono(s3, t2),
+                expectedArgType,
+                expr.b.span,
+                `right operand of '${expr.op}' has incorrect type`,
+                `Expected: ${formatType(expectedArgType)}, got: ` +
+                    `${formatType(applySubstMono(s3, t2))}`,
+                ...getVariableNotes(expr.b, ctx)
+            );
 
             /* return composition of all substitutions */
             return {
@@ -515,18 +516,14 @@ export function validateExpr(expr: Expr, ctx: Context,
             let { subst: s1, mono: t1 } = validateExpr(expr.e, ctx, factory);
 
             /* try to unify type as bool */
-            let s2: Substitution;
-            try {
-                s2 = unify(t1, { type: "bool" }, expr.e.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    err.msg = `logical NOT (~) requires a boolean operand`;
-                    err.notes.push(`Operand inferred as: ${formatType(t1)}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            let s2 = unify_or_error(
+                t1,
+                { type: "bool" },
+                expr.e.span,
+                `logical NOT (~) requires a boolean operand`,
+                `Operand inferred as: ${formatType(t1)}`,
+                ...getVariableNotes(expr.e, ctx)
+            );
 
             return {
                 subst: composeSubst(s2, s1),
@@ -550,41 +547,29 @@ export function validateExpr(expr: Expr, ctx: Context,
             let { subst: s3, mono: t3 } = validateExpr(expr.else,
                             applySubstCtx(composeSubst(s2, s1), ctx), factory);
 
-            let s4: Substitution, s5: Substitution;
-
             /* unify condition with bool */
-            try {
-                s4 = unify(applySubstMono(composeSubst(s3, s2), t1),
-                               { type: "bool" }, expr.cond.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    let inferred = formatType(applySubstMono(
-                        composeSubst(s3, s2), t1));
-                    err.msg = `condition of 'if' must be boolean`;
-                    err.notes.push(`Condition inferred as: ${inferred}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            let s4 = unify_or_error(
+                applySubstMono(composeSubst(s3, s2), t1),
+                { type: "bool" },
+                expr.cond.span,
+                `condition of 'if' must be boolean`,
+                `Condition inferred as: ` +
+                    `${formatType(applySubstMono(composeSubst(s3, s2), t1))}`,
+                ...getVariableNotes(expr.cond, ctx)
+            );
 
             /* unify then and else (they must be of same type) */
-            try {
-                s5 = unify(applySubstMono(composeSubst(s4, s3), t2),
-                               applySubstMono(s4, t3), expr.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    let thenInferred = formatType(applySubstMono(
-                        composeSubst(s4, s3), t2));
-                    let elseInferred = formatType(applySubstMono(s4, t3));
-                    err.msg = `branches of 'if' must return the same type`;
-                    err.notes.push(`'then' branch inferred as: ${thenInferred}`);
-                    err.notes.push(`'else' branch inferred as: ${elseInferred}`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            let s5 = unify_or_error(
+                applySubstMono(composeSubst(s4, s3), t2),
+                applySubstMono(s4, t3),
+                expr.span,
+                `branches of 'if' must return the same type`,
+                `'then' branch inferred as: ` +
+                    `${formatType(applySubstMono(composeSubst(s4, s3), t2))}`,
+                `'else' branch inferred as: ${formatType(applySubstMono(s4, t3))}`,
+                ...getVariableNotes(expr.then, ctx),
+                ...getVariableNotes(expr.else, ctx)
+            )
 
             /* return as per algorithm W rules */
             return {
@@ -627,39 +612,27 @@ export function validateExpr(expr: Expr, ctx: Context,
                 arg: applySubstMono(s1, freshArg),
                 ret: t1
             };
-            let s2: Substitution;
-            try {
-                s2 = unify(applySubstMono(s1, freshF), expectedFun, expr.span);
-            } catch (err: any) {
-                if (err instanceof DiagnosticError) {
-                    err.notes.push(`recursive function '${expr.i}' has ` +
-                                   `inconsistent internal types`);
-                    for (const note of getVariableNotes(expr, ctx))
-                        err.notes.push(note);
-                }
-                throw err;
-            }
+            let s2 = unify_or_error(
+                applySubstMono(s1, freshF),
+                expectedFun,
+                expr.span,
+                `recursive function '${expr.i}' has inconsistent internal types`,
+                ...getVariableNotes(expr, ctx)
+            );
 
             /* we must make sure that the expected function type unifies with our
              * type annotation, combining the resulting substitutions */
             if (expr.retType) {
                 let annotatedType = labelToMono(expr.retType);
-                let sLabel: Substitution;
-                try {
-
-                    sLabel = unify(expectedFun, annotatedType, expr.span);
-                } catch (err: any) {
-                    if (err instanceof DiagnosticError) {
-                        err.msg = `function body does not match type annotation`;
-                        err.notes.push(`Annotated type: ` +
-                                       `${formatType(labelToMono(expr.retType))}`)
-                        err.notes.push(`Inferred type: ` +
-                                       `${formatType(expectedFun)}`);
-                        for (const note of getVariableNotes(expr, ctx))
-                            err.notes.push(note);
-                    }
-                    throw err;
-                }
+                let sLabel = unify_or_error(
+                    expectedFun,
+                    annotatedType,
+                    expr.span,
+                    `function body does not match type annotation`,
+                    `Annotated type: ${formatType(labelToMono(expr.retType))}`,
+                    `Inferred type: ${formatType(expectedFun)}`,
+                    ...getVariableNotes(expr, ctx)
+                );
                 s2 = composeSubst(sLabel, s2);
             }
 
