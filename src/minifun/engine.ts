@@ -171,7 +171,9 @@ export function evalExpr(expr: Expr, env: Environment): Value {
             let newEnv = env.with(expr.i, closure);
 
             /* modify the closure's environment to point to the new environment,
-             * so that they point to each other and recursion is allowed */
+             * so that they point to each other and recursion is allowed.
+             * this makes it possible to skip the RecFunApp rule.
+             * p' = p[f -> (f, x, t1, p')] */
             closure.env = newEnv;
 
             /* execute the expression in the context of this new environment */
