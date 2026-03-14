@@ -81,17 +81,22 @@ export function exportToDOT(graph: Graph): string {
 
     function resolveEffectiveTarget(node: Node | undefined,
                                 seen = new Set<Node>()): Node | undefined {
+        /* base cases */
         if (!node)
             return undefined;
         if (seen.has(node))
             return node;
         seen.add(node);
 
-        if (node.type === "entry" || (node.type === "exit" && node.next))
+        /* tunnel through entry, skip and exit nodes with a next */
+        if (node.type === "entry" || node.type === "skip" ||
+                (node.type === "exit" && node.next))
             return resolveEffectiveTarget(node.next, seen);
+
         return node;
     }
 
+    /* small DFS to prevent cycles */
     function traverse(node: Node): number {
         if (visited.has(node))
             return visited.get(node)!;
@@ -115,6 +120,7 @@ export function exportToDOT(graph: Graph): string {
                 shape = "diamond";
                 break;
             case "entry":
+                /* useless anyway */
                 label = "START";
                 shape = "oval";
                 break;
@@ -123,24 +129,13 @@ export function exportToDOT(graph: Graph): string {
                 shape = "oval";
                 break;
         }
-        if (node.type === "assign") {
-            label = `${node.ast.i} := ${stringifyNum(node.ast.e)}`;
-        } else if (node.type === "cond") {
-            label = `${stringifyBool(node.ast.cond)}?`;
-        } else if (node.type === "skip") {
-            label = "skip";
-        } else if (node.type === "exit") {
-            label = "END";
-            shape = "oval";
-        } else if (node.type === "entry") {
-            label = "START";
-            shape = "oval";
-        }
         
         /* escape quotes for DOT format safely */
         label = label.replace(/"/g, '\\"');
         lines.push(`  n${id} [label="${label}", shape=${shape}];`);
 
+        /* if it's a condition, edges should have T and F labels. otherwise,
+         * no label */
         if (node.type === "cond") {
             const trueTarget = resolveEffectiveTarget(node.true);
             if (trueTarget) {
@@ -164,6 +159,7 @@ export function exportToDOT(graph: Graph): string {
         return id;
     }
 
+    /* initiate DFS and build DOT graph */
     const firstNode = resolveEffectiveTarget(graph.entry);
     if (firstNode) {
         const startId = idCounter++;
