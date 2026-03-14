@@ -456,7 +456,9 @@ export function validateExpr(expr: Expr, ctx: Context,
                 expr.span,
                 `type mismatch in function call`,
                 `Function inferred as: ${formatType(applySubstMono(s2, t1))}`,
-                `Argument inferred as: ${formatType(t2)}`
+                `Argument inferred as: ${formatType(t2)}`,
+                ...getVariableNotes(expr.f, ctx),
+                ...getVariableNotes(expr.arg, ctx)
            );
 
             /* return type as per algorithm W rules */

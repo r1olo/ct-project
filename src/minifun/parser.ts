@@ -4,8 +4,7 @@
 */
 
 import { BinOp, Expr, TypeLabel } from "./engine";
-import { SourceSpan } from "./diag";
-import { ParseError } from "../errors";
+import { DiagnosticError, SourceSpan } from "./diag";
 
 export type TokenType =
     /* keywords */
@@ -171,7 +170,11 @@ export function tokenize(source: string): Token[] {
             continue;
         }
 
-        throw new ParseError(`unexpected character '${char}' at line ${line}`);
+        /* throw error */
+        throw new DiagnosticError(`unexpected character '${char}' at ` +
+                                  `line ${line}`,
+                                  { start: { line, col },
+                                    end: { line, col } });
     }
 
     tokens.push({ type: "EOF", literal: "", line, col });
@@ -499,10 +502,12 @@ export class Parser {
         throw this.error(this.peek(), msg);
     }
 
-    private error(token: Token, msg: string): ParseError {
+    private error(token: Token, msg: string): DiagnosticError {
         /* quick error wrapper */
-        return new ParseError(`[line ${token.line}] error at ` +
-                              `'${token.literal}': ${msg}`)
+        return new DiagnosticError(`parse error at line ${token.line}, ` +
+                                   `token '${token.literal}': ${msg}`,
+                                   { start: { line: token.line, col: token.col },
+                                     end: { line: token.line, col: token.col } });
     }
 }
 
