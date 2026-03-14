@@ -4,7 +4,7 @@
 */
 
 import { BinOp, Expr, TypeLabel } from "./engine";
-import { DiagnosticError, SourceSpan } from "./diag";
+import { DiagnosticError, SourceSpan } from "../diag";
 
 export type TokenType =
     /* keywords */

@@ -3,8 +3,8 @@
 *   by Andrea Riolo Vinciguerra
 */
 
+import { SourceSpan } from "../diag";
 import { RuntimeError } from "../errors";
-import { SourceSpan } from "./diag";
 
 /* identifier type */
 export type Identifier = string;

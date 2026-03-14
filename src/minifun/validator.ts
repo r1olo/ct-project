@@ -4,7 +4,7 @@
 */
 
 import { Expr, Identifier, TypeLabel } from "./engine";
-import { DiagnosticError, SourceSpan } from "./diag";
+import { DiagnosticError, SourceSpan } from "../diag";
 import { RuntimeError } from "../errors";
 
 /* a single well-defined type (possibly generic) */

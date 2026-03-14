@@ -1,5 +1,5 @@
 /*
-*   MiniFun diagnostic system
+*   Compiler diagnostic system
 *   by Andrea Riolo Vinciguerra
 */
 

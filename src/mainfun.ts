@@ -3,7 +3,7 @@ import * as fs from "fs";
 import parse from "./minifun/parser";
 import execProg from "./minifun/engine";
 import checkProg, { formatType } from "./minifun/validator";
-import { DiagnosticError } from "./minifun/diag";
+import { DiagnosticError } from "./diag";
 
 /* core eval function */
 function evaluateSource(source: string) {
