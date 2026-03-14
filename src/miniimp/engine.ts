@@ -3,6 +3,7 @@
 *   by Andrea Riolo Vinciguerra
 */
 
+import { SourceSpan } from "../diag";
 import { EvalError } from "../errors";
 
 /* custom identiifer type for modularity */
@@ -13,26 +14,27 @@ export type Prog = { in: Identifier, out: Identifier, cmd: Cmd };
 
 /* the command node */
 export type Cmd =
-    | { type: "assign", i: Identifier,  e: NumExpr           }
-    | { type: "if",     cond: BoolExpr, then: Cmd, else: Cmd }
-    | { type: "while",  cond: BoolExpr, body: Cmd            }
-    | { type: "seq",    a: Cmd,         b: Cmd               }
-    | { type: "skip"                                         };
+    | { type: "assign", i: Identifier,   e: NumExpr, span: SourceSpan }
+    | { type: "if",     cond: BoolExpr,  then: Cmd,  else: Cmd,
+                        span: SourceSpan                              }
+    | { type: "while",  cond: BoolExpr,  body: Cmd,  span: SourceSpan }
+    | { type: "seq",    a: Cmd,          b: Cmd,     span: SourceSpan }
+    | { type: "skip",   span: SourceSpan                              };
 
 /* a numeric expression */
 export type NumExpr =
-    | { type: "id",  i: Identifier          }
-    | { type: "val", v: number              }
-    | { type: "add", a: NumExpr, b: NumExpr }
-    | { type: "sub", a: NumExpr, b: NumExpr }
-    | { type: "mul", a: NumExpr, b: NumExpr };
+    | { type: "id",  i: Identifier, span: SourceSpan                  }
+    | { type: "val", v: number,     span: SourceSpan                  }
+    | { type: "add", a: NumExpr,    b: NumExpr,      span: SourceSpan }
+    | { type: "sub", a: NumExpr,    b: NumExpr,      span: SourceSpan }
+    | { type: "mul", a: NumExpr,    b: NumExpr,      span: SourceSpan };
 
 /* a boolean expression (only used in while and if) */
 export type BoolExpr =
-    | { type: "val", v: boolean               }
-    | { type: "and", a: BoolExpr, b: BoolExpr }
-    | { type: "not", e: BoolExpr              }
-    | { type: "lt",  a: NumExpr, b: NumExpr   };
+    | { type: "val", v: boolean,  span: SourceSpan                  }
+    | { type: "and", a: BoolExpr, b: BoolExpr,     span: SourceSpan }
+    | { type: "not", e: BoolExpr, span: SourceSpan                  }
+    | { type: "lt",  a: NumExpr,  b: NumExpr,      span: SourceSpan };
 
 /* this is our memory interface */
 export interface Memory {

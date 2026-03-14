@@ -4,7 +4,7 @@
 */
 
 import { BoolExpr, Cmd, NumExpr, Prog } from "./engine";
-import { ParseError } from "../errors";
+import { DiagnosticError, SourceSpan } from "../diag";
 
 /* these are the various tokens provided by our language */
 export type TokenType =
@@ -25,6 +25,7 @@ export type Token = {
     type: TokenType,
     literal: string,
     line: number,
+    col: number,
 };
 
 /* mapping from string to token types */
@@ -51,6 +52,7 @@ export function tokenize(source: string): Token[] {
     const tokens: Token[] = [];
     let current = 0;
     let line = 1;
+    let col = 0;
 
     while (current < source.length) {
         let char = source[current]!;
@@ -58,6 +60,7 @@ export function tokenize(source: string): Token[] {
         /* handle whitespace */
         if (char === ' ' || char === '\r' || char === '\t') {
             current++;
+            col++;
             continue;
         }
 
@@ -65,80 +68,97 @@ export function tokenize(source: string): Token[] {
         if (char === '\n') {
             line++;
             current++;
+            col = 0;
             continue;
         }
 
         /* handle symbols */
         if (char === ':' && source[current + 1] === '=') {
-            tokens.push({ type: "ASSIGN", literal: ":=", line });
+            tokens.push({ type: "ASSIGN", literal: ":=", line, col });
             current += 2;
+            col += 2;
             continue;
         }
         if (char === ';') {
-            tokens.push({ type: "SEMI", literal: ";", line });
+            tokens.push({ type: "SEMI", literal: ";", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === "(") {
-            tokens.push({ type: "LPAREN", literal: "(", line });
+            tokens.push({ type: "LPAREN", literal: "(", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === ")") {
-            tokens.push({ type: "RPAREN", literal: ")", line });
+            tokens.push({ type: "RPAREN", literal: ")", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === "+") {
-            tokens.push({ type: "PLUS", literal: "+", line });
+            tokens.push({ type: "PLUS", literal: "+", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === "-") {
-            tokens.push({ type: "MINUS", literal: "-", line });
+            tokens.push({ type: "MINUS", literal: "-", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === "*") {
-            tokens.push({ type: "STAR", literal: "*", line });
+            tokens.push({ type: "STAR", literal: "*", line, col });
             current++;
+            col++;
             continue;
         }
         if (char === "<") {
-            tokens.push({ type: "LT", literal: "<", line });
+            tokens.push({ type: "LT", literal: "<", line, col });
             current++;
+            col++;
             continue;
         }
 
         /* handle identifiers and keywords */
         if (/[a-zA-Z_]/.test(char)) {
             let start = current;
+            let startCol = col;
             while (current < source.length &&
                    /[a-zA-Z0-9_]/.test(source[current]!)) {
                 current++;
+                col++;
             }
             let text = source.substring(start, current);
             let type = KEYWORDS[text] || "ID";
-            tokens.push({ type, literal: text, line });
+            tokens.push({ type, literal: text, line, col: startCol });
             continue;
         }
 
         /* handle integers */
         if (/[0-9]/.test(char)) {
             let start = current;
+            let startCol = col;
             while (current < source.length &&
                    /[0-9]/.test(source[current]!)) {
                 current++;
+                col++;
             }
             let text = source.substring(start, current);
-            tokens.push({ type: "INT", literal: text, line });
+            tokens.push({ type: "INT", literal: text, line, col: startCol });
             continue;
         }
 
-        throw new ParseError(`unexpected character '${char}' at line ${line}`);
+        /* throw error */
+        throw new DiagnosticError(`unexpected character '${char}' at ` +
+                                  `line ${line}`,
+                                  { start: { line, col },
+                                    end: { line, col } });
     }
 
-    tokens.push({ type: "EOF", literal: "", line });
+    tokens.push({ type: "EOF", literal: "", line, col });
     return tokens;
 }
 
@@ -185,13 +205,17 @@ export class Parser {
         /* handling for sequential commands (cmd; cmd) */
         while (this.match("SEMI")) {
             let right = this.parseSingleCmd();
-            cmd = { type: "seq", a: cmd, b: right };
+            let span = this.mergeSpans(cmd.span, right.span);
+            cmd = { type: "seq", a: cmd, b: right, span };
         }
 
         return cmd;
     }
 
     private parseSingleCmd(): Cmd {
+        /* start token for span creation */
+        let startToken = this.peek();
+
         /* parentheses are a single command, but inside there might be more,
          * which is why we call parseCmd */
         if (this.match("LPAREN")) {
@@ -207,7 +231,13 @@ export class Parser {
             let thenCmd = this.parseSingleCmd();
             this.consume("ELSE", "expected 'else'");
             let elseCmd = this.parseSingleCmd();
-            return { type: "if", cond, then: thenCmd, else: elseCmd };
+            return {
+                type: "if",
+                cond,
+                then: thenCmd,
+                else: elseCmd,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* while loop */
@@ -215,19 +245,32 @@ export class Parser {
             let cond = this.parseBoolExpr();
             this.consume("DO", "expected 'do' after condition");
             let body = this.parseSingleCmd();
-            return { type: "while", cond, body };
+            return {
+                type: "while",
+                cond,
+                body,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         /* skip */
         if (this.match("SKIP"))
-            return { type: "skip" };
+            return {
+                type: "skip",
+                span: this.makeSpan(startToken, this.previous())
+            };
 
         /* an identifier (for assignment) */
         if (this.match("ID")) {
             let id = this.previous().literal;
             this.consume("ASSIGN", "expected ':=' after identifier");
             let e = this.parseNumExpr();
-            return { type: "assign", i: id, e };
+            return {
+                type: "assign",
+                i: id,
+                e,
+                span: this.makeSpan(startToken, this.previous())
+            };
         }
 
         throw this.error(this.peek(), "expected a valid command");
@@ -240,26 +283,47 @@ export class Parser {
         /* if there's an AND, we apply it after recursing into the terms */
         while (this.match("AND")) {
             let right = this.parseBoolBase();
-            left = { type: "and", a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "and", a: left, b: right, span };
         }
 
         return left;
     }
 
     private parseBoolBase(): BoolExpr {
+        /* starting token for the expression */
+        let startToken = this.peek();
+
         /* scalar values */
         if (this.match("TRUE"))
-            return { type: "val", v: true };
+            return {
+                type: "val",
+                v: true,
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("FALSE"))
-            return { type: "val", v: false };
+            return {
+                type: "val",
+                v: false,
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("NOT"))
-            return { type: "not", e: this.parseBoolBase() };
+            return {
+                type: "not",
+                e: this.parseBoolBase(),
+                span: this.makeSpan(startToken, this.previous())
+            };
 
         /* must be a numeric comparison */
         let a = this.parseNumExpr();
         this.consume("LT", "expected '<' for boolean comparison");
         let b = this.parseNumExpr();
-        return { type: "lt", a, b };
+        return {
+            type: "lt",
+            a,
+            b,
+            span: this.makeSpan(startToken, this.previous())
+        };
     }
 
     private parseNumExpr(): NumExpr {
@@ -271,10 +335,11 @@ export class Parser {
         while (this.check("PLUS") || this.check("MINUS")) {
             let operator = this.advance();
             let right = this.parseTerm();
+            let span = this.mergeSpans(left.span, right.span);
             if (operator.type === "PLUS")
-                left = { type: "add", a: left, b: right }
+                left = { type: "add", a: left, b: right, span }
             else
-                left = { type: "sub", a: left, b: right }
+                left = { type: "sub", a: left, b: right, span }
         }
 
         return left;
@@ -287,13 +352,17 @@ export class Parser {
         /* while finding multiplications, chain them */
         while (this.match("STAR")) {
             let right = this.parseFactor();
-            left = { type: "mul", a: left, b: right };
+            let span = this.mergeSpans(left.span, right.span);
+            left = { type: "mul", a: left, b: right, span };
         }
 
         return left;
     }
 
     private parseFactor(): NumExpr {
+        /* starting token for the span */
+        let startToken = this.peek();
+
         /* support factors inside parentheses as whole numeric expressions */
         if (this.match("LPAREN")) {
             let expr = this.parseNumExpr();
@@ -303,11 +372,33 @@ export class Parser {
 
         /* scalar or identifier */
         if (this.match("INT"))
-            return { type: "val", v: parseInt(this.previous().literal, 10) };
+            return {
+                type: "val",
+                v: parseInt(this.previous().literal, 10),
+                span: this.makeSpan(startToken, this.previous())
+            };
         if (this.match("ID"))
-            return { type: "id", i: this.previous().literal };
+            return {
+                type: "id",
+                i: this.previous().literal,
+                span: this.makeSpan(startToken, this.previous())
+            };
 
         throw this.error(this.peek(), "expected an integer or identifier");
+    }
+
+    /* make a SourceSpan out of two tokens */
+    private makeSpan(start: Token, end: Token): SourceSpan {
+        /* the end column must include the length of the token itself */
+        return {
+            start: { line: start.line, col: start.col },
+            end: { line: end.line, col: end.col + end.literal.length }
+        }
+    }
+
+    /* merge two SourceSpans, for example in binary ops */
+    private mergeSpans(left: SourceSpan, right: SourceSpan): SourceSpan {
+        return { start: left.start, end: right.end };
     }
 
     private match(...types: TokenType[]): boolean {
@@ -357,10 +448,19 @@ export class Parser {
         throw this.error(this.peek(), msg);
     }
 
-    private error(token: Token, msg: string): ParseError {
+    private error(token: Token, msg: string): DiagnosticError {
         /* quick error wrapper */
-        return new ParseError(`[line ${token.line}] error at ` +
-                              `'${token.literal}': ${msg}`)
+        return new DiagnosticError(`parse error at line ${token.line}, ` +
+                                   `token '${token.literal}': ${msg}`,
+                                   { start: {
+                                         line: token.line,
+                                         col: token.col
+                                     },
+                                     end: {
+                                         line: token.line,
+                                         col: token.col + token.literal.length
+                                     }
+                                   });
     }
 }
 

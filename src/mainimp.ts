@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import execProg from "./miniimp/engine";
 import parse from "./miniimp/parser"
+import { DiagnosticError } from "./diag";
 
 const inputArg = process.argv[2];
 if (inputArg === undefined) {
@@ -33,5 +34,8 @@ try {
     const result = execProg(prog, inputValue);
     console.log("Result: " + result);
 } catch (err: any) {
-    console.log("Error: " + err.message);
+    if (err instanceof DiagnosticError)
+        console.error(err.format(sourceCode));
+    else
+        console.log("Error: " + err.message);
 }

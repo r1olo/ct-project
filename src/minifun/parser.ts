@@ -506,8 +506,15 @@ export class Parser {
         /* quick error wrapper */
         return new DiagnosticError(`parse error at line ${token.line}, ` +
                                    `token '${token.literal}': ${msg}`,
-                                   { start: { line: token.line, col: token.col },
-                                     end: { line: token.line, col: token.col } });
+                                   { start: {
+                                         line: token.line,
+                                         col: token.col
+                                     },
+                                     end: {
+                                         line: token.line,
+                                         col: token.col + token.literal.length
+                                     }
+                                   });
     }
 }
 
