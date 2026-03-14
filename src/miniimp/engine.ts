@@ -38,7 +38,10 @@ export type BoolExpr =
 
 /* this is our memory interface */
 export interface Memory {
+    /* update the memory with a new identifier */
     update(id: Identifier, num: number): void;
+
+    /* read an identifier or bail out */
     read(id: Identifier): number | undefined;
 };
 
