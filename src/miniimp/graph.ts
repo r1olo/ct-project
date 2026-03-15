@@ -69,41 +69,56 @@ function stringifyBool(expr: BoolExpr): string {
     }
 }
 
+/* this helper will return the actual next graph node, bypassing "entry",
+ * "exit" and "skip" nodes. this results in a much cleaner graph for
+ * viusalization */
+function resolveNode(node: Node | undefined,
+                            seen = new Set<Node>()): Node | undefined {
+    /* no node base case */
+    if (!node)
+        return undefined;
+
+    /* if the node was already scanned, it is the beginning of a cycle.
+     * therefore, it is our target */
+    if (seen.has(node))
+        return node;
+
+    /* add this node to the seen nodes */
+    seen.add(node);
+
+    /* tunnel through entry, skip and exit nodes with a next */
+    if (node.type === "entry" || node.type === "skip" ||
+            (node.type === "exit" && node.next))
+        return resolveNode(node.next, seen);
+
+    /* return node */
+    return node;
+}
+
 /* export a graph to a DOT format string for visualization, 
  * bypassing intermediate entry/exit nodes and reconstructing code from AST */
 export function exportToDOT(graph: Graph): string {
+    /* initial DOT format */
     const lines: string[] = [];
     lines.push("digraph CFG {");
     lines.push('  node [shape=box, fontname="Courier"];');
 
+    /* keep track of visited nodes */
     const visited = new Map<Node, number>();
     let idCounter = 0;
 
-    function resolveEffectiveTarget(node: Node | undefined,
-                                seen = new Set<Node>()): Node | undefined {
-        /* base cases */
-        if (!node)
-            return undefined;
-        if (seen.has(node))
-            return node;
-        seen.add(node);
-
-        /* tunnel through entry, skip and exit nodes with a next */
-        if (node.type === "entry" || node.type === "skip" ||
-                (node.type === "exit" && node.next))
-            return resolveEffectiveTarget(node.next, seen);
-
-        return node;
-    }
-
-    /* small DFS to prevent cycles */
+    /* small DFS traversing */
     function traverse(node: Node): number {
+        /* prevent cycles by returning the node we've already scanned,
+         * without traversing more */
         if (visited.has(node))
             return visited.get(node)!;
 
+        /* assign new ID to node and add to visited set */
         const id = idCounter++;
         visited.set(node, id);
 
+        /* label and shape depends on type of node */
         let label: string = node.type;
         let shape = "box";
 
@@ -120,7 +135,9 @@ export function exportToDOT(graph: Graph): string {
                 shape = "diamond";
                 break;
             case "entry":
-                /* useless anyway */
+                /* TODO: this should throw. if an entry node ends up
+                 * being traversed, it means that the resolveNode helper
+                 * has failed */
                 label = "START";
                 shape = "oval";
                 break;
@@ -137,19 +154,22 @@ export function exportToDOT(graph: Graph): string {
         /* if it's a condition, edges should have T and F labels. otherwise,
          * no label */
         if (node.type === "cond") {
-            const trueTarget = resolveEffectiveTarget(node.true);
+            /* traverse the true path and make a link to it */
+            const trueTarget = resolveNode(node.true);
             if (trueTarget) {
                 const trueId = traverse(trueTarget);
                 lines.push(`  n${id} -> n${trueId} [label=" T"];`);
             }
             
-            const falseTarget = resolveEffectiveTarget(node.false);
+            /* traverse the false path and make a link to it */
+            const falseTarget = resolveNode(node.false);
             if (falseTarget) {
                 const falseId = traverse(falseTarget);
                 lines.push(`  n${id} -> n${falseId} [label=" F"];`);
             }
         } else if (node.type !== "exit") {
-            const nextTarget = resolveEffectiveTarget(node.next);
+            /* traverse the path and make a link to it */
+            const nextTarget = resolveNode(node.next);
             if (nextTarget) {
                 const nextId = traverse(nextTarget);
                 lines.push(`  n${id} -> n${nextId};`);
@@ -160,7 +180,7 @@ export function exportToDOT(graph: Graph): string {
     }
 
     /* initiate DFS and build DOT graph */
-    const firstNode = resolveEffectiveTarget(graph.entry);
+    const firstNode = resolveNode(graph.entry);
     if (firstNode) {
         const startId = idCounter++;
         lines.push(`  n${startId} [label="START", shape=oval];`);
@@ -168,6 +188,7 @@ export function exportToDOT(graph: Graph): string {
         lines.push(`  n${startId} -> n${firstNodeId};`);
     }
 
+    /* return built DOT string */
     lines.push("}");
     return lines.join("\n");
 }
