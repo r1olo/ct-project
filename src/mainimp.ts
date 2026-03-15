@@ -7,6 +7,8 @@ import { DiagnosticError } from "./diag";
 /* CLI state */
 let inputFile: string | undefined = undefined;
 let generateGraph = false;
+let beautified = true;
+let showSkip = false;
 let inputArg: string | undefined = undefined;
 
 /* parse command line arguments */
@@ -20,12 +22,27 @@ for (let i = 0; i < args.length; i++) {
             process.exit(1);
         }
     } else if (arg === "-g") {
+        /* standard graph: beautified, hide skips */
         generateGraph = true;
+        beautified = true;
+        showSkip = false;
+    } else if (arg === "--raw") {
+        /* raw graph: no beautification, shows everything including
+         * entry/exit */
+        generateGraph = true;
+        beautified = false;
+        showSkip = true; 
+    } else if (arg === "--show-skip") {
+        /* beautified graph, but keep skip nodes */
+        generateGraph = true;
+        beautified = true;
+        showSkip = true;
     } else if (!arg.startsWith("-") && inputArg === undefined) {
         inputArg = arg;
     } else {
         console.error(`error: unexpected argument '${arg}'`);
-        console.error("usage: script.js [-f source.mi] [-g] [input_number]");
+        console.error("usage: script.js [-f source.mi] " +
+                      "[-g | --raw | --show-skip] [input_number]");
         process.exit(1);
     }
 }
@@ -33,7 +50,8 @@ for (let i = 0; i < args.length; i++) {
 /* we only strictly need the input number if we are executing the code */
 if (!generateGraph && inputArg === undefined) {
     console.error("error: input number is required for execution");
-    console.error("usage: script.js [-f source.mi] [-g] <input_number>");
+    console.error("usage: script.js [-f source.mi] " +
+                  "[-g | --raw | --show-skip] <input_number>");
     process.exit(1);
 }
 
@@ -41,7 +59,8 @@ let inputValue = 0;
 if (inputArg !== undefined) {
     inputValue = parseInt(inputArg, 10);
     if (isNaN(inputValue)) {
-        console.error(`error: provided input '${inputArg}' is not a valid integer`);
+        console.error(`error: provided input '${inputArg}' is not a ` +
+                      `valid integer`);
         process.exit(1);
     }
 }
@@ -69,9 +88,10 @@ try {
     const prog = parse(sourceCode);
     
     if (generateGraph) {
-        /* generate and print the CFG in DOT format */
-        const cfg = genGraph(prog.cmd);
-        console.log(exportToDOT(cfg));
+        /* generate and print the CFG in DOT format based on the selected
+         * flags */
+        let cfg = genGraph(prog.cmd);
+        console.log(exportToDOT(cfg, beautified, showSkip));
     } else {
         /* execute the program */
         const result = execProg(prog, inputValue);

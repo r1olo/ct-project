@@ -5,20 +5,32 @@
 
 import { BoolExpr, Cmd, NumExpr } from "./engine";
 
+/* narrow down AST types for specific nodes */
+type SkipCmd = { type: "skip" } & Cmd;
+type AssignCmd = { type: "assign" } & Cmd;
+type SeqCmd = { type: "seq" } & Cmd;
+type CondCmd = ({ type: "if" } | { type: "while" }) & Cmd;
+
+/* a "simple" command is a non-branching statement */
+type SimpleCmd = AssignCmd | SeqCmd | SkipCmd;
+
 /* the various types of minimal nodes in our graph */
 export type Node =
     /* skip might be a fake node inserted by genGraph. therefore, ast
      * property is optional */
-    | { type: "skip",   next: Node,              ast?: { type: "skip" } & Cmd  }
+    | { type: "skip",   next: Node, ast?: SkipCmd               }
  
     /* these two inherit properties from the AST */
-    | { type: "assign", next: Node,              ast: { type: "assign" } & Cmd }
-    | { type: "cond",   true: Node,              false: Node,
-                        ast: ({ type: "if" } | { type: "while" }) & Cmd        }
+    | { type: "assign", next: Node, ast: AssignCmd              }
+    | { type: "cond",   true: Node, false: Node,   ast: CondCmd }
 
     /* the two invariant nodes. exit might be a sink */
-    | { type: "entry",  next: Node                                             }
-    | { type: "exit" ,  next?: Node                                            };
+    | { type: "entry",  next: Node                              }
+    | { type: "exit" ,  next?: Node                             }
+
+    /* experimental: a block node for grouping together statements
+     * in a maximal graph */
+    | { type: "block",  next: Node, ast: SimpleCmd[]            };
 
 /* a graph (or subgraph, inductively) has two "invariant" nodes: an entry
  * one and an exit one */
@@ -69,35 +81,14 @@ function stringifyBool(expr: BoolExpr): string {
     }
 }
 
-/* this helper will return the actual next graph node, bypassing "entry",
- * "exit" and "skip" nodes. this results in a much cleaner graph for
- * viusalization */
-function resolveNode(node: Node | undefined,
-                            seen = new Set<Node>()): Node | undefined {
-    /* no node base case */
-    if (!node)
-        return undefined;
-
-    /* if the node was already scanned, it is the beginning of a cycle.
-     * therefore, it is our target */
-    if (seen.has(node))
-        return node;
-
-    /* add this node to the seen nodes */
-    seen.add(node);
-
-    /* tunnel through entry, skip and exit nodes with a next */
-    if (node.type === "entry" || node.type === "skip" ||
-            (node.type === "exit" && node.next))
-        return resolveNode(node.next, seen);
-
-    /* return node */
-    return node;
-}
-
 /* export a graph to a DOT format string for visualization, 
- * bypassing intermediate entry/exit nodes and reconstructing code from AST */
-export function exportToDOT(graph: Graph): string {
+ * bypassing intermediate entry/exit nodes and reconstructing code from AST.
+ * bypassing "skip" is optional here, because we may not care about
+ * visualizing skip nodes (TODO: ask).
+ * the entire beautifying process can be turned off, in which case skip is
+ * ignored */
+export function exportToDOT(graph: Graph, beautified: boolean = true,
+                            showSkip: boolean = true): string {
     /* initial DOT format */
     const lines: string[] = [];
     lines.push("digraph CFG {");
@@ -106,6 +97,38 @@ export function exportToDOT(graph: Graph): string {
     /* keep track of visited nodes */
     const visited = new Map<Node, number>();
     let idCounter = 0;
+
+    /* this helper will return the actual next graph node, bypassing "entry",
+     * "exit" and "skip" (optional) nodes. this results in a much cleaner graph for
+     * viusalization. this can be turned off with beautified = false, in which
+     * case skip is ignored */
+    function resolveNode(node: Node | undefined,
+                                seen = new Set<Node>()): Node | undefined {
+        /* if graph must not be beautified, don't bother bypassing intermediate
+         * nodes */
+        if (!beautified)
+            return node;
+
+        /* no node base case */
+        if (!node)
+            return undefined;
+
+        /* if the node was already scanned, it is the beginning of a cycle.
+         * therefore, it is our target */
+        if (seen.has(node))
+            return node;
+
+        /* add this node to the seen nodes */
+        seen.add(node);
+
+        /* tunnel through entry, skip (optionally) and exit nodes with a next */
+        if (node.type === "entry" || (node.type === "exit" && node.next) ||
+                (!showSkip && node.type === "skip"))
+            return resolveNode(node.next, seen);
+
+        /* return node */
+        return node;
+    }
 
     /* small DFS traversing */
     function traverse(node: Node): number {
@@ -136,8 +159,7 @@ export function exportToDOT(graph: Graph): string {
                 break;
             case "entry":
                 /* TODO: this should throw. if an entry node ends up
-                 * being traversed, it means that the resolveNode helper
-                 * has failed */
+                 * being traversed, it means that the logic has failed */
                 label = "START";
                 shape = "oval";
                 break;
@@ -145,6 +167,15 @@ export function exportToDOT(graph: Graph): string {
                 label = "END";
                 shape = "oval";
                 break;
+            case "block":
+                /* map each command to its string representation and join em */
+                label = node.ast.map(cmd => {
+                    if (cmd.type === "assign")
+                        return `${cmd.i} := ${stringifyNum(cmd.e)}`;
+                    else if (cmd.type === "skip")
+                        return "skip";
+                    return "";
+                }).filter(s => s !== "").join("\\n");
         }
         
         /* escape quotes for DOT format safely */
@@ -152,7 +183,7 @@ export function exportToDOT(graph: Graph): string {
         lines.push(`  n${id} [label="${label}", shape=${shape}];`);
 
         /* if it's a condition, edges should have T and F labels. otherwise,
-         * no label */
+         * no label (just follow next path) */
         if (node.type === "cond") {
             /* traverse the true path and make a link to it */
             const trueTarget = resolveNode(node.true);
@@ -167,7 +198,7 @@ export function exportToDOT(graph: Graph): string {
                 const falseId = traverse(falseTarget);
                 lines.push(`  n${id} -> n${falseId} [label=" F"];`);
             }
-        } else if (node.type !== "exit") {
+        } else if (node.next) {
             /* traverse the path and make a link to it */
             const nextTarget = resolveNode(node.next);
             if (nextTarget) {
@@ -180,12 +211,17 @@ export function exportToDOT(graph: Graph): string {
     }
 
     /* initiate DFS and build DOT graph */
-    const firstNode = resolveNode(graph.entry);
-    if (firstNode) {
-        const startId = idCounter++;
-        lines.push(`  n${startId} [label="START", shape=oval];`);
-        const firstNodeId = traverse(firstNode);
-        lines.push(`  n${startId} -> n${firstNodeId};`);
+    if (beautified) {
+        const firstNode = resolveNode(graph.entry);
+        if (firstNode) {
+            const startId = idCounter++;
+            lines.push(`  n${startId} [label="START", shape=oval];`);
+            const firstNodeId = traverse(firstNode);
+            lines.push(`  n${startId} -> n${firstNodeId};`);
+        }
+    } else {
+        /* if beautified is false, render raw graph exactly as it is */
+        traverse(graph.entry);
     }
 
     /* return built DOT string */
@@ -193,6 +229,80 @@ export function exportToDOT(graph: Graph): string {
     return lines.join("\n");
 }
 
+/* clean a minimal graph from its redundant entry and exit nodes. this
+ * keeps skip nodes */
+export function cleanGraph(graph: Graph): Graph {
+    /* keep track of visited nodes, and assign their clean counterpart */
+    const visited = new Map<Node, Node>();
+
+    /* this helper will return the actual next graph node, bypassing "entry"
+     * and "exit" only */
+    function resolveNode(node: Node | undefined,
+                                seen = new Set<Node>()): Node | undefined {
+        /* no node base case */
+        if (!node)
+            return undefined;
+
+        /* if the node was already scanned, it is the beginning of a cycle.
+         * therefore, it is our target */
+        if (seen.has(node))
+            return node;
+
+        /* add this node to the seen nodes */
+        seen.add(node);
+
+        /* tunnel through entry, exit nodes with a next */
+        if (node.type === "entry" || (node.type === "exit" && node.next))
+            return resolveNode(node.next, seen);
+
+        /* return node */
+        return node;
+    }
+
+    /* little dfs helper */
+    function traverse(node: Node): Node {
+        /* avoid cycles. return clean node for this one */
+        if (visited.has(node))
+            return visited.get(node)!;
+
+        /* mark as visited */
+        visited.set(node, node);
+
+        /* clean outgoing edges by tunneling to real nodes, bypassing entry
+         * and exit nodes in the middle */
+        if (node.type === "cond") {
+            /* bypass entry and exit for both cond branches */
+            let trueTarget = resolveNode(node.true);
+            let falseTarget = resolveNode(node.false);
+
+            /* clean next target nodes */
+            if (trueTarget)
+                node.true = traverse(trueTarget);
+            if (falseTarget)
+                node.false = traverse(falseTarget);
+        } else if (node.next) {
+            /* bypass entry and exit for single branch */
+            let target = resolveNode(node.next);
+
+            /* clean next target node */
+            if (target)
+                node.next = traverse(target);
+        }
+
+        /* return clean node */
+        return node;
+    }
+
+    /* clean the graph */
+    traverse(graph.entry);
+
+    /* return the clean graph */
+    return { entry: graph.entry, exit: graph.exit };
+}
+
+/* generate a minimal graph out of a command.
+ * TODO: ask if branches must converge to skip or it's ok for them to
+ * converge to an exit node */
 export default function genGraph(cmd: Cmd): Graph {
     switch (cmd.type) {
         case "assign": {
