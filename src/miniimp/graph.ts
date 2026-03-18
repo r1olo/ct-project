@@ -6,10 +6,10 @@
 import { BoolExpr, Cmd, NumExpr } from "./engine";
 
 /* narrow down AST types for specific nodes */
-type SkipCmd = { type: "skip" } & Cmd;
+type SkipCmd =   { type: "skip" }   & Cmd;
 type AssignCmd = { type: "assign" } & Cmd;
-type SeqCmd = { type: "seq" } & Cmd;
-type CondCmd = ({ type: "if" } | { type: "while" }) & Cmd;
+type SeqCmd =    { type: "seq" }    & Cmd;
+type CondCmd =  ({ type: "if" } | { type: "while" }) & Cmd;
 
 /* a "simple" command is a non-branching statement */
 type SimpleCmd = AssignCmd | SeqCmd | SkipCmd;
