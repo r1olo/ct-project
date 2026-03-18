@@ -37,6 +37,9 @@ type SimpleNode = Extract<Node, { next?: Node }>;
  * is strictly undefined. an exit node CANNOT have children */
 type ExitNode = { next?: undefined } & SimpleNode;
 
+/* a block node is a block node */
+type BlockNode = { type: "block" } & Node;
+
 /* a graph (or subgraph, inductively) has two "invariant" nodes: an entry
  * one and an exit one */
 export type Graph = {
@@ -110,39 +113,6 @@ function bypassSkip(node: Node | undefined,
     return node;
 }
 
-/* this helper will run through a series of commands, returning the first
- * node that is NOT in series (like a conditional node) and the list of
- * commands scavenged so far */
-function scavengeCommands(node: Node | undefined, seen = new Set<Node>(),
-                          cmds: SimpleCmd[] = [])
-                              : [Node | undefined, SimpleCmd[]] {
-    /* no node base case */
-    if (!node)
-        return [undefined, cmds];
-
-    /* if node was aalready scanned, it is the beginning of a cycle. it is our
-     * target */
-    if (seen.has(node))
-        return [node, cmds];
-
-    /* if this is a conditional node OR we're at the end of the graph, stop
-     * here */
-    if (node.type === "cond")
-        return [node, cmds];
-
-    /* add this node to the seen nodes */
-    seen.add(node);
-
-    /* if we're already in a block node, add AST nodes. otherwise, just add
-     * the one we have (if it's not a fakeskip with no AST node backing it) */
-    if (node.type === "block")
-        cmds.push(...node.ast);
-    else if (node.ast)
-        cmds.push(node.ast);
-    return scavengeCommands(node.next, seen, cmds);
-}
-
-
 /* export a graph to a DOT format string for visualization, 
  * bypassing intermediate entry/exit nodes and reconstructing code from AST.
  * bypassing "skip" is optional here, because we may not care about
@@ -172,7 +142,7 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
 
     /* small DFS traversing */
     function traverse(node: Node): number {
-        /* prevent cycles by returning the node we've already scanned,
+        /* prevent cycles by returning the node ID we've already scanned,
          * without traversing more */
         if (visited.has(node))
             return visited.get(node)!;
@@ -251,42 +221,100 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
 /* return a maximal graph out of a minimal graph. this function is
  * idempotent */
 export function maximizeGraph(graph: Graph): Graph {
-    /* keep track of visited node, where for each node you assign the
-     * maximal node counterpart (may be the same node) */
+    /* keep track of visited nodes, where for each node we assign the
+     * head of the maximal graph starting from this node (or including it
+     * if it's a block) */
     let visited = new Map<Node, Node>();
 
     /* pre-fetch the exit node that will be changed in the traverse function */
     let exitNode: ExitNode = graph.exit;
 
-    /* quick dfs helper that replaces each node with its block counterpart */
-    function traverse(node: Node): Node {
+    /* return a new generic block node */
+    const newBlock = (): BlockNode => { return { type: "block", ast: [] } };
+
+    /* quick dfs helper that, for each node, returns either the block
+     * accumulated so far or the node itself if we aren't carrying any
+     * AST nodes, which is basically the head of the maximal subgraph
+     * starting from/including this node */
+    function traverse(node: Node, block: BlockNode = newBlock()): Node {
+        /* whether we are carrying commands */
+        const carrying = block.ast.length > 0;
+
+        /* return a wrapped node. if we are carrying commands, we must
+         * return our current block but set its next pointer to the node.
+         * if we are not carrying commands, it is useless to put an empty
+         * block in front of the node as the head of the new subgraph */
+        const wrappedNode = (node: Node) => {
+            if (!carrying)
+                return node;
+            block.next = node;
+            return block;
+        }
+
         /* prevent cycles by returning early */
-        if (visited.has(node))
-            return visited.get(node)!;
+        if (visited.has(node)) {
+            /* get the head of the subgraph spawned by this node */
+            let target = visited.get(node)!;
+
+            /* return wrapped node */
+            return wrappedNode(target);
+        }
 
         /* we have hit a conditional, leave it as it is and keep dfs'ing */
         if (node.type === "cond") {
+            /* set cond as its own subgraph head and maximize its paths'
+             * subgraphs */
             visited.set(node, node);
-            node.true = traverse(node.true);
-            node.false = traverse(node.false);
-            return node;
+            node.true = traverse(node.true, newBlock());
+            node.false = traverse(node.false, newBlock());
+
+            /* return wrapped node */
+            return wrappedNode(node);
         }
 
-        /* grab all the commands in this chain and build a block out of it */
-        let [nextNode, cmds] = scavengeCommands(node);
-        let block: SimpleNode = { type: "block", ast: cmds };
+        /* if this is a fake skip (skip && !ast), this is a merge node and
+         * needs special attention. we want to treat it like a "cond" node:
+         * it must stay the same, but it may occur that it is the last node
+         * in the graph. in such case, we set it to the exitNode */
+        if (node.type === "skip" && !node.ast) {
+            /* set fake skip as its own subgraph's head */
+            visited.set(node, node);
 
-        /* the current node is visited and its block counterpart is the new
-         * block */
+            /* maximize this node's path's subgraph if it exists, otherwise
+             * set it as last node */
+            if (node.next)
+                node.next = traverse(node.next, newBlock());
+            else
+                exitNode = node as ExitNode;
+
+            /* return wrapped node */
+            return wrappedNode(node);
+        }
+
+        /* this node right here will have the current block assigned. this
+         * will retroactively be updated with the traversal. it means that the
+         * subgraph spawned by (or that includes) this node will have this
+         * current block as its head */
         visited.set(node, block);
 
-        /* if we do have a next node, traverse it as well */
-        if (nextNode)
-            block.next = traverse(nextNode);
-        else
-            exitNode = block as ExitNode;
+        /* add the node's commands to our current block */
+        switch (node.type) {
+            case "skip":
+            case "assign":
+                /* node.ast exists because this skip is not a fake skip */
+                block.ast.push(node.ast!);
+                break;
+            case "block":
+                block.ast.push(...node.ast);
+                break;
+        }
 
-        /* return the new block */
+        /* if we have a next node, "include" it into our current block */
+        if (node.next)
+            return traverse(node.next, block);
+
+        /* this block is graph's exit node */
+        exitNode = block as ExitNode;
         return block;
     }
 
