@@ -105,8 +105,13 @@ function bypassSkip(node: Node | undefined,
     /* add this node to the seen nodes */
     seen.add(node);
 
-    /* tunnel through entry, skip (optionally) and exit nodes with a next */
+    /* tunnel through skip and exit nodes with a next */
     if (node.type === "skip")
+        return bypassSkip(node.next, seen);
+
+    /* block nodes whose only cmd is "skip" are also bad */
+    if (node.type === "block" && node.ast.length === 1 &&
+            node.ast[0]!.type == "skip")
         return bypassSkip(node.next, seen);
 
     /* return node */
