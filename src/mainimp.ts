@@ -4,10 +4,18 @@ import parse from "./miniimp/parser";
 import genGraph, { exportToDOT } from "./miniimp/graph";
 import { DiagnosticError } from "./diag";
 
+/* show usage and exit */
+function usage(msg?: string) {
+    if (msg)
+        console.error(msg);
+    console.error("usage: script.js [-f source.mi] " +
+                  "[-g | --no-skip] [input_number]");
+    process.exit(1);
+}
+
 /* CLI state */
 let inputFile: string | undefined = undefined;
 let generateGraph = false;
-let beautified = true;
 let showSkip = false;
 let inputArg: string | undefined = undefined;
 
@@ -22,38 +30,23 @@ for (let i = 0; i < args.length; i++) {
             process.exit(1);
         }
     } else if (arg === "-g") {
-        /* standard graph: beautified, hide skips */
+        /* standard graph: show all skips */
         generateGraph = true;
-        beautified = true;
-        showSkip = false;
-    } else if (arg === "--raw") {
-        /* raw graph: no beautification, shows everything including
-         * entry/exit */
-        generateGraph = true;
-        beautified = false;
-        showSkip = true; 
-    } else if (arg === "--show-skip") {
-        /* beautified graph, but keep skip nodes */
-        generateGraph = true;
-        beautified = true;
         showSkip = true;
+    } else if (arg === "--no-skip") {
+        /* beautified graph: hide all skips */
+        generateGraph = true;
+        showSkip = false;
     } else if (!arg.startsWith("-") && inputArg === undefined) {
         inputArg = arg;
     } else {
-        console.error(`error: unexpected argument '${arg}'`);
-        console.error("usage: script.js [-f source.mi] " +
-                      "[-g | --raw | --show-skip] [input_number]");
-        process.exit(1);
+        usage(`error: unexpected argument '${arg}'`);
     }
 }
 
 /* we only strictly need the input number if we are executing the code */
-if (!generateGraph && inputArg === undefined) {
-    console.error("error: input number is required for execution");
-    console.error("usage: script.js [-f source.mi] " +
-                  "[-g | --raw | --show-skip] <input_number>");
-    process.exit(1);
-}
+if (!generateGraph && inputArg === undefined)
+    usage("error: input number is required for execution");
 
 let inputValue = 0;
 if (inputArg !== undefined) {
@@ -91,7 +84,7 @@ try {
         /* generate and print the CFG in DOT format based on the selected
          * flags */
         let cfg = genGraph(prog.cmd);
-        console.log(exportToDOT(cfg, beautified, showSkip));
+        console.log(exportToDOT(cfg, showSkip));
     } else {
         /* execute the program */
         const result = execProg(prog, inputValue);

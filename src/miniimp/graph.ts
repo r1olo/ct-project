@@ -18,25 +18,29 @@ type SimpleCmd = AssignCmd | SeqCmd | SkipCmd;
 export type Node =
     /* skip might be a fake node inserted by genGraph. therefore, ast
      * property is optional */
-    | { type: "skip",   next: Node, ast?: SkipCmd               }
+    | { type: "skip",   next?: Node, ast?: SkipCmd               }
  
     /* these two inherit properties from the AST */
-    | { type: "assign", next: Node, ast: AssignCmd              }
+    | { type: "assign", next?: Node, ast: AssignCmd              }
     | { type: "cond",   true: Node, false: Node,   ast: CondCmd }
-
-    /* the two invariant nodes. exit might be a sink */
-    | { type: "entry",  next: Node                              }
-    | { type: "exit" ,  next?: Node                             }
 
     /* experimental: a block node for grouping together statements
      * in a maximal graph */
-    | { type: "block",  next: Node, ast: SimpleCmd[]            };
+    | { type: "block",  next?: Node, ast: SimpleCmd[]            };
+
+/* a "simple" node is a non-branching node (it has next? property, hence
+ * the extract) */
+type SimpleNode = Extract<Node, { next?: Node }>;
+
+/* an exit node is a non-branching node (a SimpleNode) whose next property
+ * is strictly undefined. an exit node CANNOT have children */
+type ExitNode = { next?: undefined } & SimpleNode;
 
 /* a graph (or subgraph, inductively) has two "invariant" nodes: an entry
  * one and an exit one */
 export type Graph = {
-    entry: { type: "entry" } & Node,
-    exit:  { type: "exit"  } & Node,
+    entry: Node,
+    exit:  ExitNode,
 };
 
 /* convert a numeric expression into string */
@@ -81,54 +85,57 @@ function stringifyBool(expr: BoolExpr): string {
     }
 }
 
+/* this helper will return the actual next graph node bypassing "skip"
+ * nodes */
+function bypassSkip(node: Node | undefined,
+                    seen = new Set<Node>()): Node | undefined {
+    /* no node base case */
+    if (!node)
+        return undefined;
+
+    /* if the node was already scanned, it is the beginning of a cycle.
+     * therefore, it is our target */
+    if (seen.has(node))
+        return node;
+
+    /* add this node to the seen nodes */
+    seen.add(node);
+
+    /* tunnel through entry, skip (optionally) and exit nodes with a next */
+    if (node.type == "skip")
+        return bypassSkip(node.next, seen);
+
+    /* return node */
+    return node;
+}
+
+
 /* export a graph to a DOT format string for visualization, 
  * bypassing intermediate entry/exit nodes and reconstructing code from AST.
  * bypassing "skip" is optional here, because we may not care about
  * visualizing skip nodes (TODO: ask).
  * the entire beautifying process can be turned off, in which case skip is
  * ignored */
-export function exportToDOT(graph: Graph, beautified: boolean = true,
-                            showSkip: boolean = true): string {
+export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
     /* initial DOT format */
-    const lines: string[] = [];
+    let lines: string[] = [];
     lines.push("digraph CFG {");
     lines.push('  node [shape=box, fontname="Courier"];');
 
     /* keep track of visited nodes */
-    const visited = new Map<Node, number>();
+    let visited = new Map<Node, number>();
     let idCounter = 0;
 
-    /* this helper will return the actual next graph node, bypassing "entry",
-     * "exit" and "skip" (optional) nodes. this results in a much cleaner graph for
-     * viusalization. this can be turned off with beautified = false, in which
-     * case skip is ignored */
-    function resolveNode(node: Node | undefined,
-                                seen = new Set<Node>()): Node | undefined {
-        /* if graph must not be beautified, don't bother bypassing intermediate
-         * nodes */
-        if (!beautified)
-            return node;
+    /* whether we bypass "skip" nodes or include them */
+    const resolveNode = (node: Node | undefined) => showSkip ? node :
+        bypassSkip(node);
 
-        /* no node base case */
-        if (!node)
-            return undefined;
-
-        /* if the node was already scanned, it is the beginning of a cycle.
-         * therefore, it is our target */
-        if (seen.has(node))
-            return node;
-
-        /* add this node to the seen nodes */
-        seen.add(node);
-
-        /* tunnel through entry, skip (optionally) and exit nodes with a next */
-        if (node.type === "entry" || (node.type === "exit" && node.next) ||
-                (!showSkip && node.type === "skip"))
-            return resolveNode(node.next, seen);
-
-        /* return node */
-        return node;
-    }
+    /* preallocate and insert START and END nodes (we no longer have entry and
+     * exit nodes, so these will substitute them in the visualization) */
+    let startId = idCounter++;
+    let endId = idCounter++;
+    lines.push(`  n${startId} [label="START", shape=oval];`);
+    lines.push(`  n${endId} [label="END", shape=oval];`);
 
     /* small DFS traversing */
     function traverse(node: Node): number {
@@ -138,7 +145,7 @@ export function exportToDOT(graph: Graph, beautified: boolean = true,
             return visited.get(node)!;
 
         /* assign new ID to node and add to visited set */
-        const id = idCounter++;
+        let id = idCounter++;
         visited.set(node, id);
 
         /* label and shape depends on type of node */
@@ -156,16 +163,6 @@ export function exportToDOT(graph: Graph, beautified: boolean = true,
             case "cond":
                 label = `${stringifyBool(node.ast.cond)}?`;
                 shape = "diamond";
-                break;
-            case "entry":
-                /* TODO: this should throw. if an entry node ends up
-                 * being traversed, it means that the logic has failed */
-                label = "START";
-                shape = "oval";
-                break;
-            case "exit":
-                label = "END";
-                shape = "oval";
                 break;
             case "block":
                 /* map each command to its string representation and join em */
@@ -185,170 +182,74 @@ export function exportToDOT(graph: Graph, beautified: boolean = true,
         /* if it's a condition, edges should have T and F labels. otherwise,
          * no label (just follow next path) */
         if (node.type === "cond") {
-            /* traverse the true path and make a link to it */
-            const trueTarget = resolveNode(node.true);
-            if (trueTarget) {
-                const trueId = traverse(trueTarget);
-                lines.push(`  n${id} -> n${trueId} [label=" T"];`);
-            }
+            /* traverse the true path and make a link to it. if true path
+             * resolves to nothing, point it to the END node */
+            let trueTarget = resolveNode(node.true);
+            let trueId = trueTarget ? traverse(trueTarget) : endId;
+            lines.push(`  n${id} -> n${trueId} [label=" T"];`);
             
-            /* traverse the false path and make a link to it */
-            const falseTarget = resolveNode(node.false);
-            if (falseTarget) {
-                const falseId = traverse(falseTarget);
-                lines.push(`  n${id} -> n${falseId} [label=" F"];`);
-            }
-        } else if (node.next) {
-            /* traverse the path and make a link to it */
-            const nextTarget = resolveNode(node.next);
-            if (nextTarget) {
-                const nextId = traverse(nextTarget);
-                lines.push(`  n${id} -> n${nextId};`);
-            }
+            /* traverse the false path and make a link to it. same as above,
+             * link to END if it resolves to nothing */
+            let falseTarget = resolveNode(node.false);
+            let falseId = falseTarget ? traverse(falseTarget) : endId;
+            lines.push(`  n${id} -> n${falseId} [label=" F"];`);
+        } else {
+            /* traverse the path and make a link to it. same as above with END
+             * node */
+            let nextTarget = resolveNode(node.next);
+            let nextId = nextTarget ? traverse(nextTarget) : endId;
+            lines.push(`  n${id} -> n${nextId};`);
         }
 
         return id;
     }
 
-    /* initiate DFS and build DOT graph */
-    if (beautified) {
-        const firstNode = resolveNode(graph.entry);
-        if (firstNode) {
-            const startId = idCounter++;
-            lines.push(`  n${startId} [label="START", shape=oval];`);
-            const firstNodeId = traverse(firstNode);
-            lines.push(`  n${startId} -> n${firstNodeId};`);
-        }
-    } else {
-        /* if beautified is false, render raw graph exactly as it is */
-        traverse(graph.entry);
-    }
+    /* link START node to the first resolved node or directly to END, if the
+     * first node resolves to nothing (example: a graph full of skips) */
+    let firstNode = resolveNode(graph.entry);
+    let firstId = firstNode ? traverse(firstNode) : endId;
+    lines.push(`  n${startId} -> n${firstId};`);
 
     /* return built DOT string */
     lines.push("}");
     return lines.join("\n");
 }
 
-/* clean a minimal graph from its redundant entry and exit nodes. this
- * keeps skip nodes */
-export function cleanGraph(graph: Graph): Graph {
-    /* keep track of visited nodes, and assign their clean counterpart */
-    const visited = new Map<Node, Node>();
-
-    /* this helper will return the actual next graph node, bypassing "entry"
-     * and "exit" only */
-    function resolveNode(node: Node | undefined,
-                                seen = new Set<Node>()): Node | undefined {
-        /* no node base case */
-        if (!node)
-            return undefined;
-
-        /* if the node was already scanned, it is the beginning of a cycle.
-         * therefore, it is our target */
-        if (seen.has(node))
-            return node;
-
-        /* add this node to the seen nodes */
-        seen.add(node);
-
-        /* tunnel through entry, exit nodes with a next */
-        if (node.type === "entry" || (node.type === "exit" && node.next))
-            return resolveNode(node.next, seen);
-
-        /* return node */
-        return node;
-    }
-
-    /* little dfs helper */
-    function traverse(node: Node): Node {
-        /* avoid cycles. return clean node for this one */
-        if (visited.has(node))
-            return visited.get(node)!;
-
-        /* mark as visited */
-        visited.set(node, node);
-
-        /* clean outgoing edges by tunneling to real nodes, bypassing entry
-         * and exit nodes in the middle */
-        if (node.type === "cond") {
-            /* bypass entry and exit for both cond branches */
-            let trueTarget = resolveNode(node.true);
-            let falseTarget = resolveNode(node.false);
-
-            /* clean next target nodes */
-            if (trueTarget)
-                node.true = traverse(trueTarget);
-            if (falseTarget)
-                node.false = traverse(falseTarget);
-        } else if (node.next) {
-            /* bypass entry and exit for single branch */
-            let target = resolveNode(node.next);
-
-            /* clean next target node */
-            if (target)
-                node.next = traverse(target);
-        }
-
-        /* return clean node */
-        return node;
-    }
-
-    /* clean the graph */
-    traverse(graph.entry);
-
-    /* return the clean graph */
-    return { entry: graph.entry, exit: graph.exit };
-}
-
-/* generate a minimal graph out of a command.
- * TODO: ask if branches must converge to skip or it's ok for them to
- * converge to an exit node */
+/* generate a minimal graph out of a command */
 export default function genGraph(cmd: Cmd): Graph {
     switch (cmd.type) {
         case "assign": {
-            /* build a subgraph with an assign node in the middle
-             *          i
-             *          |
-             *          s
-             *          |
-             *          f
+            /* build a subgraph with an assign node (both entry and exit)
+             *          n (in) (out)
              */
-            let f: Node = { type: "exit" };
-            let s: Node = { type: "assign", next: f, ast: cmd };
-            let i: Node = { type: "entry", next: s };
+            let n: ExitNode = { type: "assign", ast: cmd };
 
             /* return subgraph */
-            return { entry: i, exit: f };
+            return { entry: n, exit: n };
         }
         case "if": {
             /* get the two subgraphs for the two branches */
             let trueBranch = genGraph(cmd.then);
             let falseBranch = genGraph(cmd.else);
 
-            /* build a (half) subgraph with a conditional in the middle and the
-             * two conditional branches
-             *          i
-             *          |
-             *          b?
+            /* build a subgraph with a conditional and the two conditional
+             * branches
+             *          b? (in)
              *         / \
              *        t   f
              *         \ /
-             *       fakeSkip
-             *          |
-             *          f
+             *       fakeSkip (out)
              */
-            let f: Node = { type: "exit" };
-            let fakeSkip: Node = { type: "skip", next: f };
+            let fakeSkip: ExitNode = { type: "skip" };
             let b: Node = { type: "cond", true: trueBranch.entry,
                             false: falseBranch.entry, ast: cmd };
-            let i: Node = { type: "entry", next: b };
 
-            /* adjust the two subgraphs to poin to the fakeSkip node */
-            trueBranch.exit.next = fakeSkip;
-            falseBranch.exit.next = fakeSkip;
+            /* adjust the two subgraphs to point to the fakeSkip node */
+            (trueBranch.exit as SimpleNode).next = fakeSkip;
+            (falseBranch.exit as SimpleNode).next = fakeSkip;
 
             /* return subgraph */
-            return { entry: i, exit: f };
+            return { entry: b, exit: fakeSkip };
         }
         case "while": {
             /* get the subgrap for the while branch */
@@ -356,27 +257,22 @@ export default function genGraph(cmd: Cmd): Graph {
 
             /* build a (half) subgraph with a conditional in the middle and
              * the while branch
-             *          i
-             *          |
-             *       -< b?<|
-             *       |  |  |
-             *       V  w->-
+             *       -< b? (in) <|
+             *       |  |        |
+             *       V  w---->---|
              *       |  
-             *       fakeSkip
-             *          |
-             *          f*/
-            let f: Node = { type: "exit" };
-            let fakeSkip: Node = { type: "skip", next: f };
+             *       fakeSkip (out)
+             */
+            let fakeSkip: ExitNode = { type: "skip" };
             let b: Node = { type: "cond", true: whileBranch.entry,
                             false: fakeSkip, ast: cmd };
-            let i: Node = { type: "entry", next: b };
 
             /* adjust the while branch to point to the conditonal node
              * (loop wrap-back) */
-            whileBranch.exit.next = b;
+            (whileBranch.exit as SimpleNode).next = b;
 
             /* return the subgraph */
-            return { entry: i, exit: f };
+            return { entry: b, exit: fakeSkip };
         }
         case "seq": {
             /* get the two subgraphs for the commands */
@@ -384,25 +280,19 @@ export default function genGraph(cmd: Cmd): Graph {
             let branch2 = genGraph(cmd.b);
 
             /* link the two subgraphs' exit and entry nodes */
-            branch1.exit.next = branch2.entry
+            (branch1.exit as SimpleNode).next = branch2.entry
 
             /* return the subgraph */
             return { entry: branch1.entry, exit: branch2.exit };
         }
         case "skip": {
-            /* build a subgraph with a skip node in the middle
-             *          i
-             *          |
-             *         skip
-             *          |
-             *          f
+            /* build a subgraph with a skip node (both entry and exit)
+             *         skip (in) (out)
              */
-            let f: Node = { type: "exit" };
-            let s: Node = { type: "skip", next: f, ast: cmd };
-            let i: Node = { type: "entry", next: s };
+            let s: ExitNode = { type: "skip", ast: cmd };
 
             /* return the subgraph */
-            return { entry: i, exit: f };
+            return { entry: s, exit: s };
         }
     }
 }
