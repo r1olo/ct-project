@@ -9,14 +9,15 @@ function usage(msg?: string) {
     if (msg)
         console.error(msg);
     console.error("usage: script.js [-f source.mi] " +
-                  "[-g | --no-skip] [input_number]");
+                  "[-g] [-m] [--no-skip] [input_number]");
     process.exit(1);
 }
 
 /* CLI state */
 let inputFile: string | undefined = undefined;
 let generateGraph = false;
-let showSkip = false;
+let genMaxGraph = false;
+let showSkip = true;
 let inputArg: string | undefined = undefined;
 
 /* parse command line arguments */
@@ -32,11 +33,12 @@ for (let i = 0; i < args.length; i++) {
     } else if (arg === "-g") {
         /* standard graph: show all skips */
         generateGraph = true;
-        showSkip = true;
     } else if (arg === "--no-skip") {
         /* beautified graph: hide all skips */
-        generateGraph = true;
         showSkip = false;
+    } else if (arg === "-m") {
+        /* should we generate the maximized graph? */
+        genMaxGraph = true;
     } else if (!arg.startsWith("-") && inputArg === undefined) {
         inputArg = arg;
     } else {
@@ -83,7 +85,8 @@ try {
     if (generateGraph) {
         /* generate and print the CFG in DOT format based on the selected
          * flags */
-        let cfg = maximizeGraph(genGraph(prog.cmd));
+        let cfg = genMaxGraph ? maximizeGraph(genGraph(prog.cmd)) :
+            genGraph(prog.cmd);
         console.log(exportToDOT(cfg, showSkip));
     } else {
         /* execute the program */
