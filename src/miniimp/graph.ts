@@ -11,8 +11,8 @@ type AssignCmd = { type: "assign" } & Cmd;
 type SeqCmd =    { type: "seq" }    & Cmd;
 type CondCmd =  ({ type: "if" } | { type: "while" }) & Cmd;
 
-/* a "simple" command is a non-branching statement */
-type SimpleCmd = AssignCmd | SeqCmd | SkipCmd;
+/* a "simple" command is a simple statement in the language (no seqs) */
+type SimpleCmd = AssignCmd | SeqCmd | SkipCmd | CondCmd;
 
 /* the various types of minimal nodes in our graph */
 export type Node =
@@ -22,14 +22,15 @@ export type Node =
  
     /* these two inherit properties from the AST */
     | { type: "assign", next?: Node, ast: AssignCmd              }
-    | { type: "cond",   true: Node, false: Node,   ast: CondCmd }
+    | { type: "cond",   true: Node, false: Node,    ast: CondCmd }
 
     /* experimental: a block node for grouping together statements
      * in a maximal graph */
     | { type: "block",  next?: Node, ast: SimpleCmd[]            };
 
 /* a "simple" node is a non-branching node (it has next? property, hence
- * the extract) */
+ * the extract). synonym of:
+ *      Node extends { next?: Node } ? Node : never */
 type SimpleNode = Extract<Node, { next?: Node }>;
 
 /* an exit node is a non-branching node (a SimpleNode) whose next property
@@ -102,11 +103,43 @@ function bypassSkip(node: Node | undefined,
     seen.add(node);
 
     /* tunnel through entry, skip (optionally) and exit nodes with a next */
-    if (node.type == "skip")
+    if (node.type === "skip")
         return bypassSkip(node.next, seen);
 
     /* return node */
     return node;
+}
+
+/* this helper will run through a series of commands, returning the first
+ * node that is NOT in series (like a conditional node) and the list of
+ * commands scavenged so far */
+function scavengeCommands(node: Node | undefined, seen = new Set<Node>(),
+                          cmds: SimpleCmd[] = [])
+                              : [Node | undefined, SimpleCmd[]] {
+    /* no node base case */
+    if (!node)
+        return [undefined, cmds];
+
+    /* if node was aalready scanned, it is the beginning of a cycle. it is our
+     * target */
+    if (seen.has(node))
+        return [node, cmds];
+
+    /* if this is a conditional node OR we're at the end of the graph, stop
+     * here */
+    if (node.type === "cond")
+        return [node, cmds];
+
+    /* add this node to the seen nodes */
+    seen.add(node);
+
+    /* if we're already in a block node, add AST nodes. otherwise, just add
+     * the one we have (if it's not a fakeskip with no AST node backing it) */
+    if (node.type === "block")
+        cmds.push(...node.ast);
+    else if (node.ast)
+        cmds.push(node.ast);
+    return scavengeCommands(node.next, seen, cmds);
 }
 
 
@@ -213,6 +246,55 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
     /* return built DOT string */
     lines.push("}");
     return lines.join("\n");
+}
+
+/* return a maximal graph out of a minimal graph. this function is
+ * idempotent */
+export function maximizeGraph(graph: Graph): Graph {
+    /* keep track of visited node, where for each node you assign the
+     * maximal node counterpart (may be the same node) */
+    let visited = new Map<Node, Node>();
+
+    /* pre-fetch the exit node that will be changed in the traverse function */
+    let exitNode: ExitNode = graph.exit;
+
+    /* quick dfs helper that replaces each node with its block counterpart */
+    function traverse(node: Node): Node {
+        /* prevent cycles by returning early */
+        if (visited.has(node))
+            return visited.get(node)!;
+
+        /* we have hit a conditional, leave it as it is and keep dfs'ing */
+        if (node.type === "cond") {
+            visited.set(node, node);
+            node.true = traverse(node.true);
+            node.false = traverse(node.false);
+            return node;
+        }
+
+        /* grab all the commands in this chain and build a block out of it */
+        let [nextNode, cmds] = scavengeCommands(node);
+        let block: SimpleNode = { type: "block", ast: cmds };
+
+        /* the current node is visited and its block counterpart is the new
+         * block */
+        visited.set(node, block);
+
+        /* if we do have a next node, traverse it as well */
+        if (nextNode)
+            block.next = traverse(nextNode);
+        else
+            exitNode = block as ExitNode;
+
+        /* return the new block */
+        return block;
+    }
+
+    /* traverse graph and transform nodes in blocks */
+    let startNode = traverse(graph.entry);
+
+    /* return graph */
+    return { entry: startNode, exit: exitNode };
 }
 
 /* generate a minimal graph out of a command */
