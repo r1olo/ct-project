@@ -4,6 +4,7 @@
 */
 
 import { BoolExpr, Cmd, NumExpr } from "./engine";
+import { RuntimeError } from "../errors";
 
 /* narrow down AST types for specific nodes */
 type SkipCmd =   { type: "skip" }   & Cmd;
@@ -22,11 +23,7 @@ export type Node =
  
     /* these two inherit properties from the AST */
     | { type: "assign", next?: Node, ast: AssignCmd              }
-    | { type: "cond",   true: Node, false: Node,    ast: CondCmd }
-
-    /* experimental: a block node for grouping together statements
-     * in a maximal graph */
-    | { type: "block",  next?: Node, ast: SimpleCmd[]            };
+    | { type: "cond",   true: Node,  false: Node,   ast: CondCmd }
 
 /* a "simple" node is a non-branching node (it has next? property, hence
  * the extract). synonym of:
@@ -37,14 +34,29 @@ type SimpleNode = Extract<Node, { next?: Node }>;
  * is strictly undefined. an exit node CANNOT have children */
 type ExitNode = { next?: undefined } & SimpleNode;
 
-/* a block node is a block node */
-type BlockNode = { type: "block" } & Node;
-
 /* a graph (or subgraph, inductively) has two "invariant" nodes: an entry
  * one and an exit one */
 export type Graph = {
     entry: Node,
     exit:  ExitNode,
+};
+
+/* create a Block (a maximal graph node) */
+export type Block =
+    /* a linear block is just an array of commands */
+    | { type: "linear", next?: Block, ast: SimpleCmd[]                   }
+
+    /* a conditional block is an array of commands that branches at the end */
+    | { type: "cond",   true: Block,  false: Block,    ast: SimpleCmd[],
+                        cond: CondCmd                                    };
+
+/* an exit block is a non-branching block (linear block) that cannot have
+ * children */
+type ExitBlock = { type: "linear", next?: undefined } & Block;
+
+export type BlockGraph = {
+    entry: Block,
+    exit:  ExitBlock,
 };
 
 /* convert a numeric expression into string */
@@ -89,41 +101,10 @@ function stringifyBool(expr: BoolExpr): string {
     }
 }
 
-/* this helper will return the actual next graph node bypassing "skip"
- * nodes */
-function bypassSkip(node: Node | undefined,
-                    seen = new Set<Node>()): Node | undefined {
-    /* no node base case */
-    if (!node)
-        return undefined;
 
-    /* if the node was already scanned, it is the beginning of a cycle.
-     * therefore, it is our target */
-    if (seen.has(node))
-        return node;
-
-    /* add this node to the seen nodes */
-    seen.add(node);
-
-    /* tunnel through skip and exit nodes with a next */
-    if (node.type === "skip")
-        return bypassSkip(node.next, seen);
-
-    /* block nodes whose only cmd is "skip" are also bad */
-    if (node.type === "block" && node.ast.length === 1 &&
-            node.ast[0]!.type == "skip")
-        return bypassSkip(node.next, seen);
-
-    /* return node */
-    return node;
-}
-
-/* export a graph to a DOT format string for visualization, 
- * bypassing intermediate entry/exit nodes and reconstructing code from AST.
+/* export a minimal graph to a DOT format string for visualization.
  * bypassing "skip" is optional here, because we may not care about
- * visualizing skip nodes (TODO: ask).
- * the entire beautifying process can be turned off, in which case skip is
- * ignored */
+ * visualizing skip nodes */
 export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
     /* initial DOT format */
     let lines: string[] = [];
@@ -134,9 +115,33 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
     let visited = new Map<Node, number>();
     let idCounter = 0;
 
-    /* whether we bypass "skip" nodes or include them */
-    const resolveNode = (node: Node | undefined) => showSkip ? node :
-        bypassSkip(node);
+    /* this helper will return the actual next graph node bypassing "skip"
+     * nodes */
+    function resolveNode(node: Node | undefined,
+                         seen = new Set<Node>()): Node | undefined {
+        /* if we need to show skips, return prematurely */
+        if (showSkip)
+            return node;
+
+        /* no node base case */
+        if (!node)
+            return undefined;
+
+        /* if the node was already scanned, it is the beginning of a cycle.
+         * therefore, it is our target */
+        if (seen.has(node))
+            return node;
+
+        /* add this node to the seen nodes */
+        seen.add(node);
+
+        /* tunnel through skip and exit nodes with a next */
+        if (node.type === "skip")
+            return resolveNode(node.next, seen);
+
+        /* return node */
+        return node;
+    }
 
     /* preallocate and insert START and END nodes (we no longer have entry and
      * exit nodes, so these will substitute them in the visualization) */
@@ -172,15 +177,6 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
                 label = `${stringifyBool(node.ast.cond)}?`;
                 shape = "diamond";
                 break;
-            case "block":
-                /* map each command to its string representation and join em */
-                label = node.ast.map(cmd => {
-                    if (cmd.type === "assign")
-                        return `${cmd.i} := ${stringifyNum(cmd.e)}`;
-                    else if (cmd.type === "skip")
-                        return "skip";
-                    return "";
-                }).filter(s => s !== "").join("\\n");
         }
         
         /* escape quotes for DOT format safely */
@@ -223,78 +219,218 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
     return lines.join("\n");
 }
 
-/* return a maximal graph out of a minimal graph. this function is
- * idempotent */
-export function maximizeGraph(graph: Graph): Graph {
+/* export a maximal graph for visualization. the only skips present here
+ * are the ones inserted by the programmer. we can hide those as well */
+export function exportBlockToDOT(graph: BlockGraph,
+                                 showSkip: boolean = true): string {
+    /* initial DOT format */
+    let lines: string[] = [];
+    lines.push("digraph CFG {");
+    lines.push('  node [shape=box, fontname="Courier"];');
+
+    /* keep track of visited block */
+    let visited = new Map<Block, number>();
+    let idCounter = 0;
+
+    /* this helper will return the actual next graph block bypassing those
+     * blocks with only one "skip" command (useless to display if showSkip
+     * is set to false) */
+    function resolveBlock(block: Block | undefined,
+                          seen = new Set<Block>()): Block | undefined {
+        /* if we need to show skips, return prematurely */
+        if (showSkip)
+            return block;
+
+        /* no block base case */
+        if (!block)
+            return undefined;
+
+        /* if the block was already scanned, it is the beginning of a cycle.
+         * therefore, it is our target */
+        if (seen.has(block))
+            return block;
+
+        /* add this block to the seen blocks */
+        seen.add(block);
+
+        /* tunnel through blocks with only one "skip" statement */
+        if (block.type === "linear" && block.ast.length === 1 &&
+                block.ast[0]!.type === "skip")
+            return resolveBlock(block.next, seen);
+
+        /* return block */
+        return block;
+    }
+
+    /* preallocate and insert START and END nodes */
+    let startId = idCounter++;
+    let endId = idCounter++;
+    lines.push(`  n${startId} [label="START", shape=oval];`);
+    lines.push(`  n${endId} [label="END", shape=oval];`);
+
+    /* small DFS traversing */
+    function traverse(block: Block): number {
+        /* prevent cycles by returning the node ID we've already scanned,
+         * without traversing more */
+        if (visited.has(block))
+            return visited.get(block)!;
+
+        /* assign new ID to node and add to visited set */
+        let id = idCounter++;
+        visited.set(block, id);
+
+        /* label is built on top of the commands' array */
+        let labelStrings: string[] = block.ast.map(cmd => {
+            if (cmd.type === "assign")
+                return `${cmd.i} := ${stringifyNum(cmd.e)}`;
+            else if (cmd.type === "skip")
+                return showSkip ? "skip" : "";
+            return "";
+        }).filter(s => s !== "");
+
+        /* if it's a conditional block, we must append the conditional
+         * expression at the end of the label strings */
+        if (block.type === "cond")
+            labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
+
+        /* build final label and escape quotes for DOT format safely */
+        let label = labelStrings.join("\\n").replace(/"/g, '\\"');
+        lines.push(`  n${id} [label="${label}", shape=box];`);
+
+        /* if it's a condition, edges should have T and F labels. otherwise,
+         * no label (just follow next path) */
+        if (block.type === "cond") {
+            /* traverse the true path and make a link to it. if true path
+             * resolves to nothing, point it to the END node */
+            let trueTarget = resolveBlock(block.true);
+            let trueId = trueTarget ? traverse(trueTarget) : endId;
+            lines.push(`  n${id} -> n${trueId} [label=" T"];`);
+            
+            /* traverse the false path and make a link to it. same as above,
+             * link to END if it resolves to nothing */
+            let falseTarget = resolveBlock(block.false);
+            let falseId = falseTarget ? traverse(falseTarget) : endId;
+            lines.push(`  n${id} -> n${falseId} [label=" F"];`);
+        } else {
+            /* traverse the path and make a link to it. same as above with END
+             * node */
+            let nextTarget = resolveBlock(block.next);
+            let nextId = nextTarget ? traverse(nextTarget) : endId;
+            lines.push(`  n${id} -> n${nextId};`);
+        }
+
+        return id;
+    }
+
+    /* link START node to the first resolved node or directly to END, if the
+     * first node resolves to nothing (example: a graph full of blocks
+     * with one skip) */
+    let firstBlock = resolveBlock(graph.entry);
+    let firstId = firstBlock ? traverse(firstBlock) : endId;
+    lines.push(`  n${startId} -> n${firstId};`);
+
+    /* return built DOT string */
+    lines.push("}");
+    return lines.join("\n");
+}
+
+/* return a maximal graph out of a minimal graph. this removes skips out of
+ * the equation, since they are useless in code generation (whether real or
+ * fake, we don't care) */
+export function maximizeGraph(graph: Graph): BlockGraph {
+    /* define helper types. AlmostCondBlock is a CondBlock where we don't
+     * yet know its true and false paths. this is used because later in
+     * traverse function there can be a circular dependency (a cycle) between
+     * a conditional block and its body, which points back to it */
+    type LinearBlock = { type: "linear" } & Block;
+    type CondBlock = { type: "cond" } & Block;
+    type AlmostCondBlock = Omit<CondBlock, "true" | "false"> & { true?: Block,
+        false?: Block };
+
+    /* quick helpers to generate a new block */
+    const getLinearBlock = (ast: SimpleCmd[] = []): LinearBlock => {
+        return { type: "linear", ast: [...ast] }
+    };
+    const getAlmostCondBlock = (cond: CondCmd,
+                                ast: SimpleCmd[] = []): AlmostCondBlock => {
+        return { type: "cond", ast: [...ast], cond }
+    };
+
+    /* assert that a block is an ExitBlock or CondBlock. if the algorithm
+     * is correct, this should not trigger an exception */
+    function assertCondBlock(block: AlmostCondBlock): asserts block is CondBlock {
+        if (block.true === undefined || block.false === undefined)
+            throw new RuntimeError("cond block is not a proper CondBlock (true " +
+                                   "or false paths undefined)");
+    }
+    function assertExitBlock(block: Block | undefined)
+                             : asserts block is ExitBlock {
+        if (block === undefined)
+            throw new RuntimeError("exit block doesn't exist");
+        if (block.type !== "linear")
+            throw new RuntimeError("exit block is not linear");
+        if (block.next !== undefined)
+            throw new RuntimeError("linear block is not an ExitBlock (has " +
+                                   "an exit property)");
+    }
+
     /* keep track of visited nodes, where for each node we assign the
-     * head of the maximal graph starting from this node (or including it
-     * if it's a block) */
-    let visited = new Map<Node, Node>();
+     * head of the block graph starting from this node (or including this
+     * node) */
+    let visited = new Map<Node, Block>();
 
-    /* pre-fetch the exit node that will be changed in the traverse function */
-    let exitNode: ExitNode = graph.exit;
-
-    /* return a new generic block node */
-    const newBlock = (): BlockNode => { return { type: "block", ast: [] } };
-
-    /* quick dfs helper that, for each node, returns either the block
-     * accumulated so far or the node itself if we aren't carrying any
-     * AST nodes (instead of an empty block we return the node itself), which
-     * is basically the head of the maximal subgraph starting from/including
-     * this node */
-    function traverse(node: Node, block: BlockNode = newBlock()): Node {
-        /* whether we are carrying commands */
-        const carrying = block.ast.length > 0;
-
-        /* return a wrapped node. if we are carrying commands, we must
-         * return our current block but set its next pointer to the node.
+    /* quick dfs helper that, for each node, returns the corresponding
+     * block. the return type is [Block, Block?] because the first one is the
+     * block mapped to the node, while the second one is the "exit" block
+     * that is captured and propagated up the recursive chain */
+    function traverse(node: Node, block: LinearBlock = getLinearBlock())
+                      : [Block, Block?] {
+        /* return a wrapped block. if we are carrying commands, we must
+         * return our current block but set its next pointer to the head block.
          * if we are not carrying commands, it is useless to put an empty
-         * block in front of the node as the head of the new subgraph */
-        const wrappedNode = (node: Node) => {
-            if (!carrying)
-                return node;
-            block.next = node;
+         * block in front of the block as the head of the new subgraph */
+        const wrappedBlock = (target: Block) => {
+            if (block.ast.length === 0)
+                return target;
+            block.next = target;
             return block;
         }
 
         /* prevent cycles by returning early */
         if (visited.has(node)) {
-            /* get the head of the subgraph spawned by this node */
-            let target = visited.get(node)!;
+            /* get the head block of the subgraph spawned by this node */
+            let headBlock = visited.get(node)!;
 
-            /* return wrapped node */
-            return wrappedNode(target);
+            /* return wrapped block */
+            return [wrappedBlock(headBlock)];
         }
 
-        /* we have hit a conditional, leave it as it is and keep dfs'ing */
+        /* we have hit a conditional: we should return a conditional block
+         * whose paths we calculate by traversing recursively */
         if (node.type === "cond") {
-            /* set cond as its own subgraph head and maximize its paths'
-             * subgraphs */
-            visited.set(node, node);
-            node.true = traverse(node.true, newBlock());
-            node.false = traverse(node.false, newBlock());
+            /* we make an "almost" cond block because we don't yet know about
+             * its true and false paths, but we still need this object in
+             * case of circular dependencies (graph cycles) */
+            let condBlock = getAlmostCondBlock(node.ast, block.ast);
+
+            /* set condBlock as its own subgraph head to handle future
+             * cycles */
+            visited.set(node, block);
+
+            /* get the true and false paths, and also the propagated exit
+             * node if any */
+            let [truePath, exitNodeT] = traverse(node.true, getLinearBlock());
+            let [falsePath, exitNodeF] = traverse(node.false, getLinearBlock());
+
+            /* update the condBlock's true or false */
+            condBlock.true = truePath;
+            condBlock.false = falsePath;
+
+            /* if the algorithm is good, this won't trip */
+            assertCondBlock(condBlock);
 
             /* return wrapped node */
-            return wrappedNode(node);
-        }
-
-        /* if this is a fake skip (skip && !ast), this is a merge node and
-         * needs special attention. we want to treat it like a "cond" node:
-         * it must stay the same, but it may occur that it is the last node
-         * in the graph. in such case, we set it to the exitNode */
-        if (node.type === "skip" && !node.ast) {
-            /* set fake skip as its own subgraph's head */
-            visited.set(node, node);
-
-            /* maximize this node's path's subgraph if it exists, otherwise
-             * set it as last node */
-            if (node.next)
-                node.next = traverse(node.next, newBlock());
-            else
-                exitNode = node as ExitNode;
-
-            /* return wrapped node */
-            return wrappedNode(node);
+            return [wrappedBlock(condBlock), exitNodeT || exitNodeF];
         }
 
         /* this node right here will have the current block assigned. this
@@ -307,12 +443,11 @@ export function maximizeGraph(graph: Graph): Graph {
         /* add the node's commands to our current block */
         switch (node.type) {
             case "skip":
-            case "assign":
-                /* node.ast exists because this skip is not a fake skip */
-                block.ast.push(node.ast!);
+                /* skip deserves to be ignored */
                 break;
-            case "block":
-                block.ast.push(...node.ast);
+            case "assign":
+                /* we add the command to the AST list */
+                block.ast.push(node.ast);
                 break;
         }
 
@@ -321,15 +456,17 @@ export function maximizeGraph(graph: Graph): Graph {
             return traverse(node.next, block);
 
         /* this block is graph's exit node */
-        exitNode = block as ExitNode;
-        return block;
+        return [block, block]
     }
 
     /* traverse graph and transform nodes in blocks */
-    let startNode = traverse(graph.entry);
+    let [entryBlock, exitBlock] = traverse(graph.entry);
+
+    /* hoping that this won't trip */
+    assertExitBlock(exitBlock);
 
     /* return graph */
-    return { entry: startNode, exit: exitNode };
+    return { entry: entryBlock, exit: exitBlock };
 }
 
 /* generate a minimal graph out of a command */

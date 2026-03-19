@@ -1,7 +1,9 @@
 import * as fs from "fs";
 import execProg from "./miniimp/engine";
 import parse from "./miniimp/parser";
-import genGraph, { maximizeGraph, exportToDOT } from "./miniimp/graph";
+import genGraph, { maximizeGraph,
+                   exportToDOT,
+                   exportMaxToDOT } from "./miniimp/graph";
 import { DiagnosticError } from "./diag";
 
 /* show usage and exit */
@@ -85,9 +87,15 @@ try {
     if (generateGraph) {
         /* generate and print the CFG in DOT format based on the selected
          * flags */
-        let cfg = genMaxGraph ? maximizeGraph(genGraph(prog.cmd)) :
-            genGraph(prog.cmd);
-        console.log(exportToDOT(cfg, showSkip));
+        let graph = genGraph(prog.cmd);
+        let dot: string;
+
+        if (genMaxGraph)
+            dot = exportMaxToDOT(maximizeGraph(graph), showSkip);
+        else
+            dot = exportToDOT(graph, showSkip);
+
+        console.log(dot);
     } else {
         /* execute the program */
         const result = execProg(prog, inputValue);
