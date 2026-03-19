@@ -239,8 +239,9 @@ export function maximizeGraph(graph: Graph): Graph {
 
     /* quick dfs helper that, for each node, returns either the block
      * accumulated so far or the node itself if we aren't carrying any
-     * AST nodes, which is basically the head of the maximal subgraph
-     * starting from/including this node */
+     * AST nodes (instead of an empty block we return the node itself), which
+     * is basically the head of the maximal subgraph starting from/including
+     * this node */
     function traverse(node: Node, block: BlockNode = newBlock()): Node {
         /* whether we are carrying commands */
         const carrying = block.ast.length > 0;
@@ -299,7 +300,8 @@ export function maximizeGraph(graph: Graph): Graph {
         /* this node right here will have the current block assigned. this
          * will retroactively be updated with the traversal. it means that the
          * subgraph spawned by (or that includes) this node will have this
-         * current block as its head */
+         * current block as its head. no node loops back to a standard block
+         * anyway so this is technically useless */
         visited.set(node, block);
 
         /* add the node's commands to our current block */
