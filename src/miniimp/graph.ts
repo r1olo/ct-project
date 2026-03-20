@@ -104,169 +104,68 @@ function stringifyBool(expr: BoolExpr): string {
     }
 }
 
-
-/* export a minimal graph to a DOT format string for visualization.
- * bypassing "skip" is optional here, because we may not care about
- * visualizing skip nodes */
-export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
+/* this is a generic export function. it will traverse any kind of graph,
+ * either minimal or maximal, as long as common operations for the node type
+ * are defined.
+ *  - labelShape: gives the label and the shape for a node
+ *  - isBranching: tells whether the node is a branching node or a singular
+ *                 node. this is used to call the function recursively for
+ *                 example giving each branch its label (T or F)
+ *  - getNext: gives either the single next branch or the tuple with the
+ *             true and false branches
+ *  - skipElem: if this function exists, it returns true if this node is
+ *              a skippable element
+ */
+function genericExportToDOT<T>(entry: T,
+           labelShape: (elem: T) => [string, string],
+           isBranching: (elem: T) => boolean,
+           getNext: (elem: T) => (T | undefined) | [T, T],
+           skipElem: ((elem: T) => boolean) | undefined = undefined): string {
     /* initial DOT format */
     let lines: string[] = [];
     lines.push("digraph CFG {");
     lines.push('  node [shape=box, fontname="Courier"];');
 
-    /* keep track of visited nodes */
-    let visited = new Map<Node, number>();
+    /* keep track of visited elements with their assigned number */
+    let visited = new Map<T, number>();
     let idCounter = 0;
 
-    /* this helper will return the actual next graph node bypassing "skip"
-     * nodes */
-    function resolveNode(node: Node | undefined,
-                         seen = new Set<Node>()): Node | undefined {
-        /* if we need to show skips, return prematurely */
-        if (showSkip)
-            return node;
+    /* this helper will skip so called "skip elements". the function
+     * skipElements will tell us if the element must be skipped. used for
+     * example to hide useless skip commands but can be customized to skip
+     * anything */
+    function resolveBlock(elem: T | undefined,
+                          seen = new Set<T>()): T | undefined {
+        /* if we need to show skips, return prematurely (disable
+         * resolveBlock completely) */
+        if (!skipElem)
+            return elem;
 
-        /* no node base case */
-        if (!node)
+        /* no element base case */
+        if (!elem)
             return undefined;
 
-        /* if the node was already scanned, it is the beginning of a cycle.
+        /* if the element was already scanned, it is the beginning of a cycle.
          * therefore, it is our target */
-        if (seen.has(node))
-            return node;
+        if (seen.has(elem))
+            return elem;
 
-        /* add this node to the seen nodes */
-        seen.add(node);
+        /* add this element to the seen elements */
+        seen.add(elem);
 
-        /* tunnel through skip and exit nodes with a next */
-        if (node.type === "skip")
-            return resolveNode(node.next, seen);
-
-        /* return node */
-        return node;
-    }
-
-    /* preallocate and insert START and END nodes (we no longer have entry and
-     * exit nodes, so these will substitute them in the visualization) */
-    let startId = idCounter++;
-    let endId = idCounter++;
-    lines.push(`  n${startId} [label="START", shape=oval];`);
-    lines.push(`  n${endId} [label="END", shape=oval];`);
-
-    /* small DFS traversing */
-    function traverse(node: Node): number {
-        /* prevent cycles by returning the node ID we've already scanned,
-         * without traversing more */
-        if (visited.has(node))
-            return visited.get(node)!;
-
-        /* assign new ID to node and add to visited set */
-        let id = idCounter++;
-        visited.set(node, id);
-
-        /* label and shape depends on type of node */
-        let label: string = node.type;
-        let shape = "box";
-
-        /* reconstruct the source code based on the node AST */
-        switch (node.type) {
-            case "skip":
-                label = "skip";
-                break;
-            case "assign":
-                label = `${node.ast.i} := ${stringifyNum(node.ast.e)}`;
-                break;
-            case "cond":
-                label = `(${stringifyBool(node.ast.cond)})?`;
-                shape = "diamond";
-                break;
-        }
-        
-        /* escape quotes for DOT format safely */
-        label = label.replace(/"/g, '\\"');
-        lines.push(`  n${id} [label="${label}", shape=${shape}];`);
-
-        /* if it's a condition, edges should have T and F labels. otherwise,
-         * no label (just follow next path) */
-        if (node.type === "cond") {
-            /* traverse the true path and make a link to it. if true path
-             * resolves to nothing, point it to the END node */
-            let trueTarget = resolveNode(node.true);
-            let trueId = trueTarget ? traverse(trueTarget) : endId;
-            lines.push(`  n${id} -> n${trueId} [label=" T"];`);
-            
-            /* traverse the false path and make a link to it. same as above,
-             * link to END if it resolves to nothing */
-            let falseTarget = resolveNode(node.false);
-            let falseId = falseTarget ? traverse(falseTarget) : endId;
-            lines.push(`  n${id} -> n${falseId} [label=" F"];`);
-        } else {
-            /* traverse the path and make a link to it. same as above with END
-             * node */
-            let nextTarget = resolveNode(node.next);
-            let nextId = nextTarget ? traverse(nextTarget) : endId;
-            lines.push(`  n${id} -> n${nextId};`);
+        /* if this element is a skip element, return its next node recursively
+         * */
+        if (skipElem(elem)) {
+            /* if this element has two branches, there's an error in the
+             * algorithm. bail out */
+            let next = getNext(elem);
+            if (Array.isArray(next))
+                throw new RuntimeError("skip element has two branches");
+            return resolveBlock(next, seen);
         }
 
-        return id;
-    }
-
-    /* link START node to the first resolved node or directly to END, if the
-     * first node resolves to nothing (example: a graph full of skips) */
-    let firstNode = resolveNode(graph.entry);
-    let firstId = firstNode ? traverse(firstNode) : endId;
-    lines.push(`  n${startId} -> n${firstId};`);
-
-    /* return built DOT string */
-    lines.push("}");
-    return lines.join("\n");
-}
-
-/* export a maximal graph for visualization. the only skips present here
- * are the ones inserted by the programmer. we can hide those as well */
-export function exportBlockToDOT(graph: BlockGraph,
-                                 showSkip: boolean = true): string {
-    /* initial DOT format */
-    let lines: string[] = [];
-    lines.push("digraph CFG {");
-    lines.push('  node [shape=box, fontname="Courier"];');
-
-    /* keep track of visited block */
-    let visited = new Map<Block, number>();
-    let idCounter = 0;
-
-    /* this helper will return the actual next graph block bypassing those
-     * blocks with only one "skip" command (useless to display if showSkip
-     * is set to false) or merge blocks with no extra commands */
-    function resolveBlock(block: Block | undefined,
-                          seen = new Set<Block>()): Block | undefined {
-        /* if we need to show skips, return prematurely */
-        if (showSkip)
-            return block;
-
-        /* no block base case */
-        if (!block)
-            return undefined;
-
-        /* if the block was already scanned, it is the beginning of a cycle.
-         * therefore, it is our target */
-        if (seen.has(block))
-            return block;
-
-        /* add this block to the seen blocks */
-        seen.add(block);
-
-        /* tunnel through linear blocks with only one "skip" statement */
-        if (block.type === "linear" && block.ast.length === 1 &&
-                block.ast[0]!.type === "skip")
-            return resolveBlock(block.next, seen);
-
-        /* tunnel through merge blocks that have no extra commands */
-        if (block.type === "merge" && block.ast.length === 0)
-            return resolveBlock(block.next, seen);
-
-        /* return block */
-        return block;
+        /* return element */
+        return elem;
     }
 
     /* preallocate and insert START and END nodes */
@@ -275,61 +174,53 @@ export function exportBlockToDOT(graph: BlockGraph,
     lines.push(`  n${startId} [label="START", shape=oval];`);
     lines.push(`  n${endId} [label="END", shape=oval];`);
 
-    /* small DFS traversing */
-    function traverse(block: Block): number {
+    /* dfs helper that will traverse the graph, will add lines to the DOT
+     * string and will assign a number to each node to pass them recursively */
+    function traverse(elem: T): number {
         /* prevent cycles by returning the node ID we've already scanned,
          * without traversing more */
-        if (visited.has(block))
-            return visited.get(block)!;
+        if (visited.has(elem))
+            return visited.get(elem)!;
 
         /* assign new ID to node and add to visited set */
         let id = idCounter++;
-        visited.set(block, id);
+        visited.set(elem, id);
 
-        /* label is built on top of the commands' array and shape depends on
-         * block type */
-        let labelStrings: string[] = block.ast.map(cmd => {
-            if (cmd.type === "assign")
-                return `${cmd.i} := ${stringifyNum(cmd.e)}`;
-            else if (cmd.type === "skip")
-                return showSkip ? "skip" : "";
-            return "";
-        }).filter(s => s !== "");
-        let shape = "box";
+        /* extract label and shape depending on element's op */
+        let [label, shape] = labelShape(elem);
 
-        /* if it's a conditional block, we must append the conditional
-         * expression at the end of the label strings. likewise, if it's
-         * a merge block, we must add "skip" on top of it (if showSkip) */
-        if (block.type === "cond") {
-            labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
-            if (block.cond.type == "while")
-                shape = "diamond";
-        } else if (block.type === "merge" && showSkip) {
-            labelStrings.unshift("skip");
-        }
-
-        /* build final label and escape quotes for DOT format safely */
-        let label = labelStrings.join("\\n").replace(/"/g, '\\"');
+        /* escape quotes for DOT format safely */
+        label = label.replace(/"/g, '\\"');
         lines.push(`  n${id} [label="${label}", shape=${shape}];`);
 
-        /* if it's a condition, edges should have T and F labels. otherwise,
-         * no label (just follow next path) */
-        if (block.type === "cond") {
+        /* if it's a branching element, edges should have T and F labels.
+         * otherwise, no label (just follow next path) */
+        let next = getNext(elem);
+        if (isBranching(elem)) {
+            /* hopefully this will never happen */
+            if (!Array.isArray(next))
+                throw new RuntimeError("branching element has at most one " +
+                                       "branch");
+
             /* traverse the true path and make a link to it. if true path
              * resolves to nothing, point it to the END node */
-            let trueTarget = resolveBlock(block.true);
+            let trueTarget = resolveBlock(next[0]);
             let trueId = trueTarget ? traverse(trueTarget) : endId;
             lines.push(`  n${id} -> n${trueId} [label=" T"];`);
             
             /* traverse the false path and make a link to it. same as above,
              * link to END if it resolves to nothing */
-            let falseTarget = resolveBlock(block.false);
+            let falseTarget = resolveBlock(next[1]);
             let falseId = falseTarget ? traverse(falseTarget) : endId;
             lines.push(`  n${id} -> n${falseId} [label=" F"];`);
         } else {
+            /* hopefully this will never happen */
+            if (Array.isArray(next))
+                throw new RuntimeError("non branching element has two branches");
+
             /* traverse the path and make a link to it. same as above with END
              * node */
-            let nextTarget = resolveBlock(block.next);
+            let nextTarget = resolveBlock(next);
             let nextId = nextTarget ? traverse(nextTarget) : endId;
             lines.push(`  n${id} -> n${nextId};`);
         }
@@ -340,13 +231,95 @@ export function exportBlockToDOT(graph: BlockGraph,
     /* link START node to the first resolved node or directly to END, if the
      * first node resolves to nothing (example: a graph full of blocks
      * with one skip) */
-    let firstBlock = resolveBlock(graph.entry);
+    let firstBlock = resolveBlock(entry);
     let firstId = firstBlock ? traverse(firstBlock) : endId;
     lines.push(`  n${startId} -> n${firstId};`);
 
     /* return built DOT string */
     lines.push("}");
     return lines.join("\n");
+}
+
+/* export a minimal graph to a DOT format string for visualization.
+ * bypassing "skip" is optional here, because we may not care about
+ * visualizing skip nodes */
+export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
+    return genericExportToDOT(graph.entry,
+        /* labelShape */
+        node => {
+            /* initial label and shape */
+            let label: string = node.type;
+            let shape: string  = "box";
+
+            /* reconstruct the source code based on the node AST */
+            switch (node.type) {
+                case "skip":
+                    label = "skip";
+                    break;
+                case "assign":
+                    label = `${node.ast.i} := ${stringifyNum(node.ast.e)}`;
+                    break;
+                case "cond":
+                    label = `(${stringifyBool(node.ast.cond)})?`;
+                    shape = "diamond";
+                    break;
+            }
+
+            return [label, shape];
+        },
+
+        /* isBranching */
+        node => node.type === "cond",
+
+        /* getNext */
+        node => node.type === "cond" ? [node.true, node.false] : node.next,
+
+        /* skipElem */
+        showSkip ? undefined : node => node.type === "skip");
+}
+
+/* export a maximal graph for visualization. the only skips present here
+ * are the ones inserted by the programmer. we can hide those as well */
+export function exportBlockToDOT(graph: BlockGraph,
+                                 showSkip: boolean = true): string {
+    return genericExportToDOT(graph.entry,
+        /* labelShape */
+        block => {
+            /* build all the command strings from the list of statements */
+            let labelStrings: string[] = block.ast.map(cmd => {
+                if (cmd.type === "assign")
+                    return `${cmd.i} := ${stringifyNum(cmd.e)}`;
+                else if (cmd.type === "skip")
+                    return showSkip ? "skip" : "";
+                return "";
+            }).filter(s => s !== "");
+            let shape: string = "box";
+
+            /* adjust shape */
+            if (block.type === "cond") {
+                labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
+                if (block.cond.type == "while")
+                    shape = "diamond";
+            } else if (block.type === "merge" && showSkip) {
+                labelStrings.unshift("skip");
+            }
+
+            return [labelStrings.join("\\n"), shape];
+        },
+
+        /* isBranching */
+        block => block.type === "cond",
+
+        /* getNext */
+        block => block.type === "cond" ? [block.true, block.false] : block.next,
+
+        /* skipElem */
+        showSkip ? undefined : block => {
+            return (block.type === "linear" && block.ast.length === 1 &&
+                    block.ast[0]!.type === "skip") ||
+                   (block.type === "merge" && block.ast.length === 0);
+        }
+    );
 }
 
 /* return a maximal graph out of a minimal graph. this removes skips out of
@@ -590,7 +563,7 @@ export default function genGraph(cmd: Cmd): Graph {
             let branch2 = genGraph(cmd.b);
 
             /* link the two subgraphs' exit and entry nodes */
-            (branch1.exit as SimpleNode).next = branch2.entry
+            (branch1.exit as SimpleNode).next = branch2.entry;
 
             /* return the subgraph */
             return { entry: branch1.entry, exit: branch2.exit };

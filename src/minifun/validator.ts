@@ -271,8 +271,7 @@ function unify_or_error(t1: MonoType, t2: MonoType, span: SourceSpan,
     } catch (err: any) {
         if (err instanceof DiagnosticError) {
             err.msg = msg;
-            for (const note of notes)
-                err.notes.push(note);
+            err.notes.push(...notes);
         }
         throw err;
     }
