@@ -286,7 +286,8 @@ export function exportBlockToDOT(graph: BlockGraph,
         let id = idCounter++;
         visited.set(block, id);
 
-        /* label is built on top of the commands' array */
+        /* label is built on top of the commands' array and shape depends on
+         * block type */
         let labelStrings: string[] = block.ast.map(cmd => {
             if (cmd.type === "assign")
                 return `${cmd.i} := ${stringifyNum(cmd.e)}`;
@@ -294,18 +295,21 @@ export function exportBlockToDOT(graph: BlockGraph,
                 return showSkip ? "skip" : "";
             return "";
         }).filter(s => s !== "");
+        let shape = "box";
 
         /* if it's a conditional block, we must append the conditional
          * expression at the end of the label strings. likewise, if it's
          * a merge block, we must add "skip" on top of it (if showSkip) */
-        if (block.type === "cond")
+        if (block.type === "cond") {
             labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
-        else if (block.type === "merge" && showSkip)
+            shape = "diamond";
+        } else if (block.type === "merge" && showSkip) {
             labelStrings.unshift("skip");
+        }
 
         /* build final label and escape quotes for DOT format safely */
         let label = labelStrings.join("\\n").replace(/"/g, '\\"');
-        lines.push(`  n${id} [label="${label}", shape=box];`);
+        lines.push(`  n${id} [label="${label}", shape=${shape}];`);
 
         /* if it's a condition, edges should have T and F labels. otherwise,
          * no label (just follow next path) */
@@ -425,9 +429,8 @@ export function maximizeGraph(graph: Graph): BlockGraph {
         if (node.type === "cond") {
             /* we make an "almost" cond block because we don't yet know about
              * its true and false paths, but we still need this object in
-             * case of circular dependencies (graph cycles). we inherit
-             * the current carried commands */
-            let condBlock = getAlmostCondBlock(node.ast, block.ast);
+             * case of circular dependencies (graph cycles) */
+            let condBlock = getAlmostCondBlock(node.ast);
 
             /* set condBlock as its own subgraph head to handle future
              * cycles. we are purposefully abusing typescript here!!! the
@@ -447,8 +450,13 @@ export function maximizeGraph(graph: Graph): BlockGraph {
             /* if the algorithm is good, this won't trip */
             assertCondBlock(condBlock);
 
-            /* return new conditional node */
-            return [condBlock, exitNodeT || exitNodeF];
+            /* this neither */
+            if (exitNodeT !== undefined && exitNodeF !== undefined)
+                throw new RuntimeError("multiple exit nodes in graph");
+
+            /* return new wrapped conditional node, linking current block
+             * to it */
+            return [wrappedBlock(condBlock), exitNodeT || exitNodeF];
         }
 
         /* we have hit a fake skip. this returns us a merge block, that
@@ -465,12 +473,14 @@ export function maximizeGraph(graph: Graph): BlockGraph {
              * note 2: do we care? */
             visited.set(node, mergeBlock);
 
-            /* if we have a next node, simply propagate the merge block
-             * down */
-            if (node.next)
-                return traverse(node.next, mergeBlock);
-            else
-                return [mergeBlock, mergeBlock];
+            /* if we have a next node, propagate the merge block down.
+             * otherwise, mergeBlock is our final block */
+            let [nextBlock, exitBlock] = node.next ?
+                traverse(node.next, mergeBlock) :
+                [mergeBlock, mergeBlock];
+
+            /* return wrapped block, linking our current to the new merge */
+            return [wrappedBlock(nextBlock), exitBlock];
         }
 
         /* this node right here will have the current block assigned. this
