@@ -1,0 +1,8 @@
+def main with input n output n as
+a := 2;
+b := 6;
+c := 8;
+if n < 1 then
+    n := 5
+else
+    n := 2

@@ -425,12 +425,20 @@ export function maximizeGraph(graph: Graph): BlockGraph {
         }
 
         /* we have hit a conditional: we should return a conditional block
-         * whose paths we calculate by traversing recursively */
+         * whose paths we calculate by traversing recursively. we need to
+         * make a distinction here based on the originating AST node: if
+         * it's a while loop, we need to separate the condition. if it's
+         * an if, it can stay in the same block as the other instructions */
         if (node.type === "cond") {
+            /* check if cond is a while */
+            const isWhile = node.ast.type == "while";
+
             /* we make an "almost" cond block because we don't yet know about
              * its true and false paths, but we still need this object in
-             * case of circular dependencies (graph cycles) */
-            let condBlock = getAlmostCondBlock(node.ast);
+             * case of circular dependencies (graph cycles). if it's a while
+             * loop, this new block must be isolated from the rest */
+            let condBlock = getAlmostCondBlock(node.ast,
+                isWhile ? [] : block.ast);
 
             /* set condBlock as its own subgraph head to handle future
              * cycles. we are purposefully abusing typescript here!!! the
@@ -454,9 +462,12 @@ export function maximizeGraph(graph: Graph): BlockGraph {
             if (exitNodeT !== undefined && exitNodeF !== undefined)
                 throw new RuntimeError("multiple exit nodes in graph");
 
-            /* return new wrapped conditional node, linking current block
-             * to it */
-            return [wrappedBlock(condBlock), exitNodeT || exitNodeF];
+            /* what we return depends on whether this is a while loop or not.
+             * if it is a while, we return the current block that points to
+             * this new conditional. otherwise, we return the conditional
+             * so far, which contains the previous commands */
+            return [isWhile ? wrappedBlock(condBlock) : condBlock,
+                    exitNodeT || exitNodeF];
         }
 
         /* we have hit a fake skip. this returns us a merge block, that
