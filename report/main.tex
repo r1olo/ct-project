@@ -10,6 +10,10 @@
 \tableofcontents
 \clearpage
 
-Hello there.
+block graph has 'merge' block to handle the case where, after an if, there's
+the end of the program. without 'merge' block, we would have an empty linear
+block (fake skip is not a command to display). while it has been done mainly
+for debugging purposes, merge and linear blocks are fundamentally equivalent to
+each other while encoding the difference needed for SSA-based algorithms.
 
 \end{document}

@@ -48,7 +48,10 @@ export type Block =
 
     /* a conditional block is an array of commands that branches at the end */
     | { type: "cond",   true: Block,  false: Block,    ast: SimpleCmd[],
-                        cond: CondCmd                                    };
+                        cond: CondCmd                                    }
+
+    /* a merge node is one that starts with a "FAKE" */
+    | { type: "merge", next?: Block, ast: SimpleCmd[]                    };
 
 /* an exit block is a non-branching block (linear block) that cannot have
  * children */
@@ -174,7 +177,7 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
                 label = `${node.ast.i} := ${stringifyNum(node.ast.e)}`;
                 break;
             case "cond":
-                label = `${stringifyBool(node.ast.cond)}?`;
+                label = `(${stringifyBool(node.ast.cond)})?`;
                 shape = "diamond";
                 break;
         }
@@ -234,7 +237,7 @@ export function exportBlockToDOT(graph: BlockGraph,
 
     /* this helper will return the actual next graph block bypassing those
      * blocks with only one "skip" command (useless to display if showSkip
-     * is set to false) */
+     * is set to false) or merge blocks with no extra commands */
     function resolveBlock(block: Block | undefined,
                           seen = new Set<Block>()): Block | undefined {
         /* if we need to show skips, return prematurely */
@@ -253,9 +256,13 @@ export function exportBlockToDOT(graph: BlockGraph,
         /* add this block to the seen blocks */
         seen.add(block);
 
-        /* tunnel through blocks with only one "skip" statement */
+        /* tunnel through linear blocks with only one "skip" statement */
         if (block.type === "linear" && block.ast.length === 1 &&
                 block.ast[0]!.type === "skip")
+            return resolveBlock(block.next, seen);
+
+        /* tunnel through merge blocks that have no extra commands */
+        if (block.type === "merge" && block.ast.length === 0)
             return resolveBlock(block.next, seen);
 
         /* return block */
@@ -289,9 +296,12 @@ export function exportBlockToDOT(graph: BlockGraph,
         }).filter(s => s !== "");
 
         /* if it's a conditional block, we must append the conditional
-         * expression at the end of the label strings */
+         * expression at the end of the label strings. likewise, if it's
+         * a merge block, we must add "skip" on top of it (if showSkip) */
         if (block.type === "cond")
             labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
+        else if (block.type === "merge" && showSkip)
+            labelStrings.unshift("skip");
 
         /* build final label and escape quotes for DOT format safely */
         let label = labelStrings.join("\\n").replace(/"/g, '\\"');
@@ -344,6 +354,7 @@ export function maximizeGraph(graph: Graph): BlockGraph {
      * a conditional block and its body, which points back to it */
     type LinearBlock = { type: "linear" } & Block;
     type CondBlock = { type: "cond" } & Block;
+    type MergeBlock = { type: "merge" } & Block;
     type AlmostCondBlock = Omit<CondBlock, "true" | "false"> & { true?: Block,
         false?: Block };
 
@@ -354,6 +365,9 @@ export function maximizeGraph(graph: Graph): BlockGraph {
     const getAlmostCondBlock = (cond: CondCmd,
                                 ast: SimpleCmd[] = []): AlmostCondBlock => {
         return { type: "cond", ast: [...ast], cond }
+    };
+    const getMergeBlock = (ast: SimpleCmd[] = []): MergeBlock => {
+        return { type: "merge", ast: [...ast] }
     };
 
     /* assert that a block is an ExitBlock or CondBlock. if the algorithm
@@ -367,11 +381,11 @@ export function maximizeGraph(graph: Graph): BlockGraph {
                              : asserts block is ExitBlock {
         if (block === undefined)
             throw new RuntimeError("exit block doesn't exist");
-        if (block.type !== "linear")
-            throw new RuntimeError("exit block is not linear");
+        if (block.type !== "linear" && block.type !== "merge")
+            throw new RuntimeError("exit block is not linear (or merge)");
         if (block.next !== undefined)
-            throw new RuntimeError("linear block is not an ExitBlock (has " +
-                                   "an exit property)");
+            throw new RuntimeError("linear (or merge) block is not an " +
+                                   "ExitBlock (has an exit property)");
     }
 
     /* keep track of visited nodes, where for each node we assign the
@@ -383,12 +397,13 @@ export function maximizeGraph(graph: Graph): BlockGraph {
      * block. the return type is [Block, Block?] because the first one is the
      * block mapped to the node, while the second one is the "exit" block
      * that is captured and propagated up the recursive chain */
-    function traverse(node: Node, block: LinearBlock = getLinearBlock())
+    function traverse(node: Node,
+                      block: LinearBlock | MergeBlock = getLinearBlock())
                       : [Block, Block?] {
         /* return a wrapped block. if we are carrying commands, we must
-         * return our current block but set its next pointer to the head block.
+         * return our current block but set its next pointer to the target.
          * if we are not carrying commands, it is useless to put an empty
-         * block in front of the block as the head of the new subgraph */
+         * block in front of the target */
         const wrappedBlock = (target: Block) => {
             if (block.ast.length === 0)
                 return target;
@@ -410,12 +425,15 @@ export function maximizeGraph(graph: Graph): BlockGraph {
         if (node.type === "cond") {
             /* we make an "almost" cond block because we don't yet know about
              * its true and false paths, but we still need this object in
-             * case of circular dependencies (graph cycles) */
+             * case of circular dependencies (graph cycles). we inherit
+             * the current carried commands */
             let condBlock = getAlmostCondBlock(node.ast, block.ast);
 
             /* set condBlock as its own subgraph head to handle future
-             * cycles */
-            visited.set(node, block);
+             * cycles. we are purposefully abusing typescript here!!! the
+             * assumption is that condBlock will *eventually* be a true
+             * CondBlock. the assertion below makes it sure */
+            visited.set(node, condBlock as CondBlock);
 
             /* get the true and false paths, and also the propagated exit
              * node if any */
@@ -429,8 +447,30 @@ export function maximizeGraph(graph: Graph): BlockGraph {
             /* if the algorithm is good, this won't trip */
             assertCondBlock(condBlock);
 
-            /* return wrapped node */
-            return [wrappedBlock(condBlock), exitNodeT || exitNodeF];
+            /* return new conditional node */
+            return [condBlock, exitNodeT || exitNodeF];
+        }
+
+        /* we have hit a fake skip. this returns us a merge block, that
+         * can possibly be extended by other commands below it. we need to
+         * check the extra case where the skip node is at the end of the
+         * graph */
+        if (node.type === "skip" && !node.ast) {
+            /* we make the merge block that is the head of the fake skip's
+             * subgraph */
+            let mergeBlock = getMergeBlock();
+
+            /* set the fake skip as visited and its merge block is the head.
+             * note: can a cycle occur?
+             * note 2: do we care? */
+            visited.set(node, mergeBlock);
+
+            /* if we have a next node, simply propagate the merge block
+             * down */
+            if (node.next)
+                return traverse(node.next, mergeBlock);
+            else
+                return [mergeBlock, mergeBlock];
         }
 
         /* this node right here will have the current block assigned. this
@@ -440,16 +480,10 @@ export function maximizeGraph(graph: Graph): BlockGraph {
          * anyway so this is technically useless */
         visited.set(node, block);
 
-        /* add the node's commands to our current block */
-        switch (node.type) {
-            case "skip":
-                /* skip deserves to be ignored */
-                break;
-            case "assign":
-                /* we add the command to the AST list */
-                block.ast.push(node.ast);
-                break;
-        }
+        /* add the node's command to our current block. we only insert real
+         * skips, ignoring fake ones */
+        if (node.ast)
+            block.ast.push(node.ast);
 
         /* if we have a next node, "include" it into our current block */
         if (node.next)
