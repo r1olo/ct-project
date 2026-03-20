@@ -302,7 +302,8 @@ export function exportBlockToDOT(graph: BlockGraph,
          * a merge block, we must add "skip" on top of it (if showSkip) */
         if (block.type === "cond") {
             labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
-            shape = "diamond";
+            if (block.cond.type == "while")
+                shape = "diamond";
         } else if (block.type === "merge" && showSkip) {
             labelStrings.unshift("skip");
         }
