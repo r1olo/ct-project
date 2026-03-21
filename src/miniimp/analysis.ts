@@ -105,7 +105,7 @@ function buildGraphMaps(graph: Graph) {
 
 /* this helper will intersect two sets where one is optional, indicating
  * a universal set */
-function intersect<T>(s1: Set<T>, s2: Set<T> | undefined) : Set<T>{
+function intersect<T>(s1: Set<T>, s2: Set<T> | undefined) : Set<T> {
     /* if the second set is the universal set, passthrough s1 */
     if (!s2)
         return s1;
@@ -215,8 +215,8 @@ export function analyzeDefinedVars(graph: Graph, input: Identifier)
 
     /* do a round of assertions and return map */
     for (const [_, definedVars] of map.entries()) {
-        if (definedVars.out === undefined)
-            throw new RuntimeError("out vars of node is the universal set");
+        if (definedVars.in === undefined || definedVars.out === undefined)
+            throw new RuntimeError("in/out var sets are undefined");
     }
     return map as Map<Node, DefinedVars>;
 }
