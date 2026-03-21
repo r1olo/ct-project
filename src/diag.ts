@@ -46,7 +46,7 @@ export class DiagnosticError extends Error {
 
         if (start.line === end.line) {
             /* single line error */
-            let lineText = lines[start.line - 1] || "";
+            let lineText = lines[start.line - 1] ?? "";
             output.push(`\x1b[34m${startLineStr} |\x1b[0m ${lineText}`);
             
             let padding = " ".repeat(padMargin + 3 + start.col);
@@ -57,7 +57,7 @@ export class DiagnosticError extends Error {
         } else {
             /* multi-line error */
             for (let i = start.line; i <= end.line; i++) {
-                let lineText = lines[i - 1] || "";
+                let lineText = lines[i - 1] ?? "";
                 let currentLineStr = i.toString().padStart(padMargin);
                 
                 output.push(`\x1b[34m${currentLineStr} |\x1b[0m ${lineText}`);

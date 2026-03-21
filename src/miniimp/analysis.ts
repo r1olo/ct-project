@@ -166,7 +166,7 @@ export function analyzeDefinedVars(graph: Graph)
         /* build defIn from predecessors. this is the intersection between
          * our current defIn and all the defOut of our predecessors */
         let newIn: Set<Identifier> | undefined = undefined;
-        for (const pred of preds.get(cur) || new Set()) {
+        for (const pred of preds.get(cur) ?? new Set()) {
             /* predecessor surely has data in the map */
             let predOut = map.get(pred)!.out;
             if (newIn === undefined)
@@ -176,7 +176,7 @@ export function analyzeDefinedVars(graph: Graph)
 
         /* if newIn doesn't exist, it means we don't have previous nodes.
          * in such case, defIn is the empty set */
-        state.in = newIn || new Set();
+        state.in = newIn ?? new Set();
 
         /* build defOut with gen() function unified with current defIn */
         let newOut: Set<Identifier> = new Set(state.in);
@@ -201,7 +201,7 @@ export function analyzeDefinedVars(graph: Graph)
          * ripple the changes to the successors */
         if (changed) {
             state.out = newOut;
-            for (const succ of succs.get(cur) || new Set())
+            for (const succ of succs.get(cur) ?? new Set())
                 wq.enqueue(succ);
         }
     }

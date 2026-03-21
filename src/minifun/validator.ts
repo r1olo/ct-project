@@ -384,7 +384,7 @@ export function formatType(t: MonoType | PolyType,
         case "var":
             /* use the mapped letter if it's a bound generic, else keep
              * original */
-            return varMap.get(t.name) || "generic";
+            return varMap.get(t.name) ?? "generic";
         case "fun":
             /* pass the map down the tree */
             let argStr = t.arg.type === "fun" ? `(${formatType(t.arg, varMap)})` :

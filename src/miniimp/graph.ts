@@ -441,7 +441,7 @@ export function maximizeGraph(graph: Graph): BlockGraph {
              * this new conditional. otherwise, we return the conditional
              * so far, which contains the previous commands */
             return [isWhile ? wrappedBlock(condBlock) : condBlock,
-                    exitNodeT || exitNodeF];
+                    exitNodeT ?? exitNodeF];
         }
 
         /* we have hit a fake skip. this returns us a merge block, that
