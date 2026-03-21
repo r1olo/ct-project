@@ -1,66 +1,66 @@
 import * as fs from "fs";
+import { ArgumentParser } from "argparse";
+import { DiagnosticError } from "./diag";
+import { RuntimeError } from "./errors";
 import execProg from "./miniimp/engine";
 import parse from "./miniimp/parser";
 import genGraph, { maximizeGraph,
                    exportToDOT,
                    exportBlockToDOT } from "./miniimp/graph";
-import { DiagnosticError } from "./diag";
+import { analyzeDefinedVars,
+         exportDefinedVarsToDOT } from "./miniimp/analysis";
 
-/* show usage and exit */
-function usage(msg?: string) {
-    if (msg)
-        console.error(msg);
-    console.error("usage: script.js [-f source.mi] " +
-                  "[-g] [-m] [--no-skip] [input_number]");
-    process.exit(1);
-}
+/* create a parser */
+const parser = new ArgumentParser({
+    description: "MiniImp compiler and graph generator"
+});
 
-/* CLI state */
-let inputFile: string | undefined = undefined;
-let generateGraph = false;
-let genMaxGraph = false;
-let showSkip = true;
-let inputArg: string | undefined = undefined;
+/* either specify a file or read from stdin */
+parser.add_argument("-f", "--file", {
+    help: "the source file to read from (defaults to stdin)"
+})
 
-/* parse command line arguments */
-const args = process.argv.slice(2);
-for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === "-f") {
-        inputFile = args[++i];
-        if (!inputFile) {
-            console.error("error: expected filename after -f");
-            process.exit(1);
-        }
-    } else if (arg === "-g") {
-        /* standard graph: show all skips */
-        generateGraph = true;
-    } else if (arg === "--no-skip") {
-        /* beautified graph: hide all skips */
-        showSkip = false;
-    } else if (arg === "-m") {
-        /* should we generate the maximized graph? */
-        genMaxGraph = true;
-    } else if (!arg.startsWith("-") && inputArg === undefined) {
-        inputArg = arg;
-    } else {
-        usage(`error: unexpected argument '${arg}'`);
-    }
-}
+/* three choices (mutually exclusive and required):
+ *  -g:           build a graph
+ *  -a:           build an analyzed graph
+ *  input_number: execute program with this input
+ */
+const group = parser.add_mutually_exclusive_group({
+    required: true
+});
+group.add_argument("-g", "--graph", {
+    action: "store_true",
+    help: "generate a normal graph (minimized by default)"
+});
+group.add_argument("-a", "--analyze", {
+    action: "store_true",
+    help: "generate a graph and analyze it"
+});
+group.add_argument("input_number", {
+    nargs: "?",
+    type: "int",
+    help: "input number for execution"
+});
 
-/* we only strictly need the input number if we are executing the code */
-if (!generateGraph && inputArg === undefined)
-    usage("error: input number is required for execution");
+/* optional modifiers for graph generation */
+parser.add_argument("-m", "--maximize", {
+    action: "store_true",
+    help: "generate a maximized graph"
+});
+parser.add_argument("-n", "--no-skip", {
+    action: "store_true",
+    help: "do not display skips in graph image"
+});
 
-let inputValue = 0;
-if (inputArg !== undefined) {
-    inputValue = parseInt(inputArg, 10);
-    if (isNaN(inputValue)) {
-        console.error(`error: provided input '${inputArg}' is not a ` +
-                      `valid integer`);
-        process.exit(1);
-    }
-}
+/* parse arguments */
+const args = parser.parse_args();
+
+const inputFile = args.file;
+const generateGraph = args.graph;
+const analyzeGraph = args.analyze;
+const genMaxGraph = args.max_graph;
+const showSkip = !args.no_skip;
+const inputValue = args.input_number;
 
 let sourceCode = "";
 try {
@@ -94,14 +94,24 @@ try {
         else
             dot = exportToDOT(graph, showSkip);
         console.log(dot);
+    } else if (analyzeGraph) {
+        let graph = genGraph(prog.cmd);
+        let map = analyzeDefinedVars(graph, prog.in);
+        console.log(exportDefinedVarsToDOT(graph, map, showSkip));
     } else {
         /* execute the program */
         const result = execProg(prog, inputValue);
         console.log("Result: " + result);
     }
 } catch (err: any) {
-    if (err instanceof DiagnosticError)
+    if (err instanceof DiagnosticError) {
+        /* print the human friendly diagnostic error */
         console.error(err.format(sourceCode));
-    else
-        console.error("Error: " + err.message);
+    } else if (err instanceof RuntimeError) {
+        /* RuntimeError has its own format */
+        console.error(err.format());
+    } else {
+        /* fallback to generic error */
+        throw new Error(String(err));
+    }
 }

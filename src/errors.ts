@@ -7,6 +7,11 @@ export class RuntimeError extends Error {
         super(msg);
         this.name = "RuntimeError";
     }
+
+    format(): string {
+        return [ `A runtime error has occurred, please report to developer.`,
+                  this.stack ?? "Stack unavailable" ].join("\n");
+    }
 }
 
 /* a parsing error */

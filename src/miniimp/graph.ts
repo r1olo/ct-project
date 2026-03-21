@@ -3,7 +3,7 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { BoolExpr, Cmd, NumExpr } from "./engine";
+import { Cmd, stringifyNum, stringifyBool } from "./engine";
 import { RuntimeError } from "../errors";
 
 /* narrow down AST types for specific nodes */
@@ -57,52 +57,11 @@ export type Block =
  * children */
 type ExitBlock = { type: "linear", next?: undefined } & Block;
 
+/* a block graph is the maximized graph */
 export type BlockGraph = {
     entry: Block,
     exit:  ExitBlock,
 };
-
-/* convert a numeric expression into string */
-function stringifyNum(expr: NumExpr): string {
-    switch (expr.type) {
-        case "id": 
-            return expr.i;
-        case "val": 
-            return expr.v.toString();
-        case "add": 
-            return `${stringifyNum(expr.a)} + ${stringifyNum(expr.b)}`;
-        case "sub": 
-            return `${stringifyNum(expr.a)} - ${stringifyNum(expr.b)}`;
-        case "mul": {
-            /* add parentheses if the child is addition or subtraction
-             * to preserve precedence */
-            const aStr = (expr.a.type === "add" || expr.a.type === "sub") ?
-                `(${stringifyNum(expr.a)})` : stringifyNum(expr.a);
-            const bStr = (expr.b.type === "add" || expr.b.type === "sub") ?
-                `(${stringifyNum(expr.b)})` : stringifyNum(expr.b);
-            return `${aStr} * ${bStr}`;
-        }
-    }
-}
-
-/* convert a boolean expression into string */
-function stringifyBool(expr: BoolExpr): string {
-    switch (expr.type) {
-        case "val": 
-            return expr.v ? "true" : "false";
-        case "lt": 
-            return `${stringifyNum(expr.a)} < ${stringifyNum(expr.b)}`;
-        case "not": {
-            /* wrap in parentheses if negating an 'and' expression */
-            const eStr = expr.e.type === "and" ?
-                `(${stringifyBool(expr.e)})` : stringifyBool(expr.e);
-            return `not ${eStr}`;
-        }
-        case "and": {
-            return `${stringifyBool(expr.a)} and ${stringifyBool(expr.b)}`;
-        }
-    }
-}
 
 /* this is a generic export function. it will traverse any kind of graph,
  * either minimal or maximal, as long as common operations for the node type
@@ -116,7 +75,7 @@ function stringifyBool(expr: BoolExpr): string {
  *  - skipElem: if this function exists, it returns true if this node is
  *              a skippable element
  */
-function genericExportToDOT<T>(entry: T,
+export function graphToDOT<T>(entry: T,
            labelShape: (elem: T) => [string, string],
            isBranching: (elem: T) => boolean,
            getNext: (elem: T) => (T | undefined) | [T, T],
@@ -244,7 +203,7 @@ function genericExportToDOT<T>(entry: T,
  * bypassing "skip" is optional here, because we may not care about
  * visualizing skip nodes */
 export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
-    return genericExportToDOT(graph.entry,
+    return graphToDOT(graph.entry,
         /* labelShape */
         node => {
             /* initial label and shape */
@@ -282,7 +241,7 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
  * are the ones inserted by the programmer. we can hide those as well */
 export function exportBlockToDOT(graph: BlockGraph,
                                  showSkip: boolean = true): string {
-    return genericExportToDOT(graph.entry,
+    return graphToDOT(graph.entry,
         /* labelShape */
         block => {
             /* build all the command strings from the list of statements */

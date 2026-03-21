@@ -3,8 +3,8 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { Identifier } from "./engine";
-import { Graph, Node } from "./graph";
+import { Identifier, stringifyNum, stringifyBool } from "./engine";
+import { Graph, Node, graphToDOT } from "./graph";
 import { RuntimeError } from "../errors";
 
 /* various tags for enabling optimizations */
@@ -129,15 +129,16 @@ function gen(node: Node): Set<Identifier> {
 }
 
 /* this function will map each block to its defined vars */
-export function analyzeDefinedVars(graph: Graph)
+export function analyzeDefinedVars(graph: Graph, input: Identifier)
         : Map<Node, DefinedVars> {
     /* fetch the utility maps from this graph */
     let { preds, succs, allNodes } = buildGraphMaps(graph);
 
-    /* utility type to define a DefinedVars struct that accepts an undefined
-     * set to represent the universal set */
-    type AlmostDefinedVars = Omit<DefinedVars, "out"> &
-        { out: Set<Identifier> | undefined };
+    /* utility type to define a DefinedVars struct that accepts undefined sets
+     * to indicate that they are yet uninitialized. (you may picture an
+     * undefined set as the "universal" set) */
+    type AlmostDefinedVars = Omit<DefinedVars, "in" | "out"> &
+        { in: Set<Identifier> | undefined, out: Set<Identifier> | undefined };
 
     /* the map so far. this map accepts an AlmostDefinedVars */
     let map = new Map<Node, AlmostDefinedVars>();
@@ -147,10 +148,15 @@ export function analyzeDefinedVars(graph: Graph)
     let wq = newQueue<Node>();
 
     /* initialize the map to prevent crashes when fetching state for
-     * predecessors. also, enqueue all nodes in the work queue */
+     * predecessors. everybody has undefined sets as initialization values.
+     * also, enqueue all nodes in the work queue */
     for (const node of allNodes) {
-        /* TOOD: entry node should have its input variable set!!!!!!!! */
-        map.set(node, { in: new Set(), out: undefined });
+        /* entry node must be tagged with input variable */
+        if (node === graph.entry) {
+            map.set(node, { in: new Set([input]), out: new Set([input]) });
+        } else {
+            map.set(node, { in: undefined, out: undefined });
+        }
         wq.enqueue(node);
     }
 
@@ -159,23 +165,24 @@ export function analyzeDefinedVars(graph: Graph)
         /* current node */
         let cur = wq.dequeue()!;
 
-        /* initialize state if it doesn't exist */
-        let state: AlmostDefinedVars = map.has(cur) ? map.get(cur)!
-            : { in: new Set(), out: undefined };
+        /* get state, which surely exists due to our initialization before */
+        let state: AlmostDefinedVars = map.get(cur)!;
 
         /* build defIn from predecessors. this is the intersection between
          * our current defIn and all the defOut of our predecessors */
-        let newIn: Set<Identifier> | undefined = undefined;
+        let newIn: Set<Identifier> | undefined = state.in;
         for (const pred of preds.get(cur) ?? new Set()) {
-            /* predecessor surely has data in the map */
+            /* predecessor surely has data in the map. if, however, it is
+             * undefined, it is the universal set. we can continue */
             let predOut = map.get(pred)!.out;
-            if (newIn === undefined)
-                newIn = new Set(predOut);
-            newIn = intersect(newIn, predOut);
+            if (predOut === undefined)
+                continue;
+            newIn = intersect(predOut, newIn);
         }
 
-        /* if newIn doesn't exist, it means we don't have previous nodes.
-         * in such case, defIn is the empty set */
+        /* if newIn doesn't exist, it means either our predecessors were
+         * uninitalized, or we didn't have any. in such case, defIn is the
+         * empty set */
         state.in = newIn ?? new Set();
 
         /* build defOut with gen() function unified with current defIn */
@@ -212,4 +219,53 @@ export function analyzeDefinedVars(graph: Graph)
             throw new RuntimeError("out vars of node is the universal set");
     }
     return map as Map<Node, DefinedVars>;
+}
+
+/* export defined variables analysis as DOT graph */
+export function exportDefinedVarsToDOT(graph: Graph,
+                                       map: Map<Node, DefinedVars>,
+                                       showSkip: boolean = true): string {
+    return graphToDOT(graph.entry,
+        /* labelShape */
+        node => {
+            /* get calculated in and our vars */
+            let inVars = map.get(node)!.in;
+            let outVars = map.get(node)!.out;
+
+            /* default shape is box, while label must be assembled */
+            let labelStrings: string[] = [];
+            let shape: string = "box";
+
+            /* first specify in variables */
+            labelStrings.push("in = {" + [...inVars].join(",") + "}");
+
+            /* reconstruct source code based on node AST */
+            switch (node.type) {
+                case "skip":
+                    labelStrings.push("skip");
+                    break;
+                case "assign":
+                    labelStrings.push(`${node.ast.i} := ` +
+                                      `${stringifyNum(node.ast.e)}`);
+                    break;
+                case "cond":
+                    labelStrings.push(`(${stringifyBool(node.ast.cond)})?`);
+                    shape = "diamond";
+                    break;
+            }
+
+            /* specify out variables */
+            labelStrings.push("out = {" + [...outVars].join(",") + "}");
+
+            return [labelStrings.join("\\n"), shape];
+        },
+
+        /* isBranching */
+        node => node.type === "cond",
+
+        /* getNext */
+        node => node.type === "cond" ? [node.true, node.false] : node.next,
+
+        /* skipElem */
+        showSkip ? undefined : node => node.type === "skip");
 }

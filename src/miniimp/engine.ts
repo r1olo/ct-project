@@ -45,6 +45,48 @@ export interface Memory {
     read(id: Identifier): number | undefined;
 };
 
+/* convert a numeric expression into string */
+export function stringifyNum(expr: NumExpr): string {
+    switch (expr.type) {
+        case "id": 
+            return expr.i;
+        case "val": 
+            return expr.v.toString();
+        case "add": 
+            return `${stringifyNum(expr.a)} + ${stringifyNum(expr.b)}`;
+        case "sub": 
+            return `${stringifyNum(expr.a)} - ${stringifyNum(expr.b)}`;
+        case "mul": {
+            /* add parentheses if the child is addition or subtraction
+             * to preserve precedence */
+            const aStr = (expr.a.type === "add" || expr.a.type === "sub") ?
+                `(${stringifyNum(expr.a)})` : stringifyNum(expr.a);
+            const bStr = (expr.b.type === "add" || expr.b.type === "sub") ?
+                `(${stringifyNum(expr.b)})` : stringifyNum(expr.b);
+            return `${aStr} * ${bStr}`;
+        }
+    }
+}
+
+/* convert a boolean expression into string */
+export function stringifyBool(expr: BoolExpr): string {
+    switch (expr.type) {
+        case "val": 
+            return expr.v ? "true" : "false";
+        case "lt": 
+            return `${stringifyNum(expr.a)} < ${stringifyNum(expr.b)}`;
+        case "not": {
+            /* wrap in parentheses if negating an 'and' expression */
+            const eStr = expr.e.type === "and" ?
+                `(${stringifyBool(expr.e)})` : stringifyBool(expr.e);
+            return `not ${eStr}`;
+        }
+        case "and": {
+            return `${stringifyBool(expr.a)} and ${stringifyBool(expr.b)}`;
+        }
+    }
+}
+
 /* evaluate a single numeric expression */
 export function evalNumExpr(expr: NumExpr, mem: Memory): number {
     switch (expr.type) {
