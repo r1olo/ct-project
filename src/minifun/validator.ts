@@ -301,38 +301,41 @@ function getGenericName(index: number): string {
 
 /* extract all variables from an expression. this is needed to dynamically
  * add variable notes to an error */
-function extractVars(expr: Expr): Set<string> {
-    let vars = new Set<string>();
+function extractVars(expr: Expr): Set<Identifier> {
+    let vars = new Set<Identifier>();
+    const addToVars = (set: Set<Identifier>) => {
+        set.forEach(v => vars.add(v));
+    }
     switch (expr.type) {
         case "id":
             vars.add(expr.i);
             break;
         case "op":
-            extractVars(expr.a).forEach(v => vars.add(v));
-            extractVars(expr.b).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.a));
+            addToVars(extractVars(expr.b));
             break;
         case "call":
-            extractVars(expr.f).forEach(v => vars.add(v));
-            extractVars(expr.arg).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.f));
+            addToVars(extractVars(expr.arg));
             break;
         case "if":
-            extractVars(expr.cond).forEach(v => vars.add(v));
-            extractVars(expr.then).forEach(v => vars.add(v));
-            extractVars(expr.else).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.cond));
+            addToVars(extractVars(expr.then));
+            addToVars(extractVars(expr.else));
             break;
         case "fun":
-            extractVars(expr.body).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.body));
             break;
         case "not":
-            extractVars(expr.e).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.e));
             break;
         case "let":
-            extractVars(expr.e).forEach(v => vars.add(v));
-            extractVars(expr.in).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.e));
+            addToVars(extractVars(expr.in));
             break;
         case "letfun":
-            extractVars(expr.body).forEach(v => vars.add(v));
-            extractVars(expr.in).forEach(v => vars.add(v));
+            addToVars(extractVars(expr.body));
+            addToVars(extractVars(expr.in));
             break;
     }
     return vars;

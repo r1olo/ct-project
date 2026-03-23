@@ -63,23 +63,32 @@ export type BlockGraph = {
     exit:  ExitBlock,
 };
 
+/* the configuration for a graphToDOT function */
+export type DOTArgs<T> = {
+    /* the entry node */
+    entry: T,
+
+    /* gives the label and shape for a node */
+    labelShape: (elem: T) => [string, string],
+
+    /* tells whether the node is a branching node o ra singular node. this
+     * is used to call the function recursively for example giving each branch
+     * its label (T or F) */
+    isBranching: (elem: T) => boolean,
+
+    /* gives either the single next branch or the tuple with the true and false
+     * branches */
+    getNext: (elem: T) => (T | undefined) | [T, T],
+
+    /* if this function exists, it returns true if this node is a skippable
+     * element */
+    skipElem?: (elem: T) => boolean,
+};
+
 /* this is a generic export function. it will traverse any kind of graph,
  * either minimal or maximal, as long as common operations for the node type
- * are defined.
- *  - labelShape: gives the label and the shape for a node
- *  - isBranching: tells whether the node is a branching node or a singular
- *                 node. this is used to call the function recursively for
- *                 example giving each branch its label (T or F)
- *  - getNext: gives either the single next branch or the tuple with the
- *             true and false branches
- *  - skipElem: if this function exists, it returns true if this node is
- *              a skippable element
- */
-export function graphToDOT<T>(entry: T,
-           labelShape: (elem: T) => [string, string],
-           isBranching: (elem: T) => boolean,
-           getNext: (elem: T) => (T | undefined) | [T, T],
-           skipElem: ((elem: T) => boolean) | undefined = undefined): string {
+ * are defined */
+export function graphToDOT<T>(args: DOTArgs<T>): string {
     /* initial DOT format */
     let lines: string[] = [];
     lines.push("digraph CFG {");
@@ -97,7 +106,7 @@ export function graphToDOT<T>(entry: T,
                           seen = new Set<T>()): T | undefined {
         /* if we need to show skips, return prematurely (disable
          * resolveBlock completely) */
-        if (!skipElem)
+        if (!args.skipElem)
             return elem;
 
         /* no element base case */
@@ -114,10 +123,10 @@ export function graphToDOT<T>(entry: T,
 
         /* if this element is a skip element, return its next node recursively
          * */
-        if (skipElem(elem)) {
+        if (args.skipElem(elem)) {
             /* if this element has two branches, there's an error in the
              * algorithm. bail out */
-            let next = getNext(elem);
+            let next = args.getNext(elem);
             if (Array.isArray(next))
                 throw new RuntimeError("skip element has two branches");
             return resolveBlock(next, seen);
@@ -146,7 +155,7 @@ export function graphToDOT<T>(entry: T,
         visited.set(elem, id);
 
         /* extract label and shape depending on element's op */
-        let [label, shape] = labelShape(elem);
+        let [label, shape] = args.labelShape(elem);
 
         /* escape quotes for DOT format safely */
         label = label.replace(/"/g, '\\"');
@@ -154,8 +163,8 @@ export function graphToDOT<T>(entry: T,
 
         /* if it's a branching element, edges should have T and F labels.
          * otherwise, no label (just follow next path) */
-        let next = getNext(elem);
-        if (isBranching(elem)) {
+        let next = args.getNext(elem);
+        if (args.isBranching(elem)) {
             /* hopefully this will never happen */
             if (!Array.isArray(next))
                 throw new RuntimeError("branching element has at most one " +
@@ -190,7 +199,7 @@ export function graphToDOT<T>(entry: T,
     /* link START node to the first resolved node or directly to END, if the
      * first node resolves to nothing (example: a graph full of blocks
      * with one skip) */
-    let firstBlock = resolveBlock(entry);
+    let firstBlock = resolveBlock(args.entry);
     let firstId = firstBlock ? traverse(firstBlock) : endId;
     lines.push(`  n${startId} -> n${firstId};`);
 
@@ -203,9 +212,9 @@ export function graphToDOT<T>(entry: T,
  * bypassing "skip" is optional here, because we may not care about
  * visualizing skip nodes */
 export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
-    return graphToDOT(graph.entry,
-        /* labelShape */
-        node => {
+    return graphToDOT({
+        entry: graph.entry,
+        labelShape: node => {
             /* initial label and shape */
             let label: string = node.type;
             let shape: string  = "box";
@@ -226,24 +235,20 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
 
             return [label, shape];
         },
-
-        /* isBranching */
-        node => node.type === "cond",
-
-        /* getNext */
-        node => node.type === "cond" ? [node.true, node.false] : node.next,
-
-        /* skipElem */
-        showSkip ? undefined : node => node.type === "skip");
+        isBranching: node => node.type === "cond",
+        getNext: node => node.type === "cond" ? [node.true, node.false]
+            : node.next,
+        skipElem: showSkip ? undefined : node => node.type === "skip"
+    });
 }
 
 /* export a maximal graph for visualization. the only skips present here
  * are the ones inserted by the programmer. we can hide those as well */
 export function exportBlockToDOT(graph: BlockGraph,
                                  showSkip: boolean = true): string {
-    return graphToDOT(graph.entry,
-        /* labelShape */
-        block => {
+    return graphToDOT({
+        entry: graph.entry,
+        labelShape: block => {
             /* build all the command strings from the list of statements */
             let labelStrings: string[] = block.ast.map(cmd => {
                 if (cmd.type === "assign")
@@ -265,20 +270,15 @@ export function exportBlockToDOT(graph: BlockGraph,
 
             return [labelStrings.join("\\n"), shape];
         },
-
-        /* isBranching */
-        block => block.type === "cond",
-
-        /* getNext */
-        block => block.type === "cond" ? [block.true, block.false] : block.next,
-
-        /* skipElem */
-        showSkip ? undefined : block => {
+        isBranching: block => block.type === "cond",
+        getNext: block => block.type === "cond" ? [block.true, block.false]
+            : block.next,
+        skipElem: showSkip ? undefined : block => {
             return (block.type === "linear" && block.ast.length === 1 &&
                     block.ast[0]!.type === "skip") ||
                    (block.type === "merge" && block.ast.length === 0);
         }
-    );
+    });
 }
 
 /* return a maximal graph out of a minimal graph. this removes skips out of

@@ -8,6 +8,7 @@ import genGraph, { maximizeGraph,
                    exportToDOT,
                    exportBlockToDOT } from "./miniimp/graph";
 import { analyzeDefinedVars,
+         analyzeLiveVars,
          exportDefinedVarsToDOT } from "./miniimp/analysis";
 
 /* create a parser */
@@ -32,9 +33,13 @@ group.add_argument("-g", "--graph", {
     action: "store_true",
     help: "generate a normal graph (minimized by default)"
 });
-group.add_argument("-a", "--analyze", {
+group.add_argument("-ad", "--analyze-defined", {
     action: "store_true",
-    help: "generate a graph and analyze it"
+    help: "generate a defined variable graph"
+});
+group.add_argument("-al", "--analyze-live", {
+    action: "store_true",
+    help: "generate a live variable graph"
 });
 group.add_argument("input_number", {
     nargs: "?",
@@ -57,7 +62,8 @@ const args = parser.parse_args();
 
 const inputFile = args.file;
 const generateGraph = args.graph;
-const analyzeGraph = args.analyze;
+const analyzeDefined = args.analyze_defined;
+const analyzeLive = args.analyze_live;
 const genMaxGraph = args.max_graph;
 const showSkip = !args.no_skip;
 const inputValue = args.input_number;
@@ -94,9 +100,13 @@ try {
         else
             dot = exportToDOT(graph, showSkip);
         console.log(dot);
-    } else if (analyzeGraph) {
+    } else if (analyzeDefined) {
         let graph = genGraph(prog.cmd);
         let map = analyzeDefinedVars(graph, prog.in);
+        console.log(exportDefinedVarsToDOT(graph, map, showSkip));
+    } else if (analyzeLive) {
+        let graph = genGraph(prog.cmd);
+        let map = analyzeLiveVars(graph, prog.out);
         console.log(exportDefinedVarsToDOT(graph, map, showSkip));
     } else {
         /* execute the program */
@@ -112,6 +122,6 @@ try {
         console.error(err.format());
     } else {
         /* fallback to generic error */
-        throw new Error(String(err));
+        throw err;
     }
 }

@@ -3,12 +3,15 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { Identifier, stringifyNum, stringifyBool } from "./engine";
+import { BoolExpr, Cmd, Identifier, NumExpr,
+         stringifyNum, stringifyBool } from "./engine";
 import { Graph, Node, graphToDOT } from "./graph";
 import { RuntimeError } from "../errors";
 
 /* various tags for enabling optimizations */
-type DefinedVars = { in: Set<Identifier>, out: Set<Identifier> };
+type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
+type DefinedVars = VarSets;
+type LiveVars = VarSets;
 
 /* a queue is needed for the work queue approach. this queue is special
  * because it keeps insertion order intact and at the same time disallows
@@ -49,10 +52,82 @@ function newQueue<T>(): UniQueue<T> {
     }
 }
 
+/* extract all used variables from a NumExpr. needed for calculation of gen and
+ * kill functions for analyses */
+function extractUsedVarsNumExpr(expr: NumExpr): Set<Identifier> {
+    let vars = new Set<Identifier>();
+    const addToVars = (set: Set<Identifier>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (expr.type) {
+        case "id":
+            vars.add(expr.i);
+            break;
+        case "add":
+        case "sub":
+        case "mul":
+            addToVars(extractUsedVarsNumExpr(expr.a));
+            addToVars(extractUsedVarsNumExpr(expr.b));
+            break;
+    }
+    return vars;
+}
+
+/* extract all used variables from a BoolExpr. needed for calculation of gen and
+ * kill functions for analyses */
+function extractUsedVarsBoolExpr(expr: BoolExpr): Set<Identifier> {
+    let vars = new Set<Identifier>();
+    const addToVars = (set: Set<Identifier>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (expr.type) {
+        case "and":
+            addToVars(extractUsedVarsBoolExpr(expr.a));
+            addToVars(extractUsedVarsBoolExpr(expr.b));
+            break;
+        case "not":
+            addToVars(extractUsedVarsBoolExpr(expr.e));
+            break;
+        case "lt":
+            addToVars(extractUsedVarsNumExpr(expr.a));
+            addToVars(extractUsedVarsNumExpr(expr.b));
+            break;
+    }
+    return vars;
+}
+
+/* extract all used variables from a Cmd. needed for calculation of gen and
+ * kill functions for analyses */
+function extractUsedVarsCmd(cmd: Cmd): Set<Identifier> {
+    let vars = new Set<Identifier>();
+    const addToVars = (set: Set<Identifier>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (cmd.type) {
+        case "assign":
+            /* we skip cmd.i, which is the assigned variable!!!. extract
+             * variables used in the numeric expression */
+            addToVars(extractUsedVarsNumExpr(cmd.e));
+            break;
+        case "if":
+        case "while":
+            /* extract variables used in the boolean condition */
+            addToVars(extractUsedVarsBoolExpr(cmd.cond));
+            break;
+        case "seq":
+        case "skip":
+            /* seq's and skip's have no variables (they are commands) */
+            break;
+    }
+    return vars;
+}
+
 /* this helper will scan the graph and build utility maps that can be
  * used in analyses. for example, among the others, a map of the predecessors
  * for every node */
-function buildGraphMaps(graph: Graph) {
+function buildGraphMaps(graph: Graph): { preds: Map<Node, Set<Node>>,
+                                         succs: Map<Node, Set<Node>>,
+                                         allNodes: Set<Node> } {
     /* these are the maps */
     let preds = new Map<Node, Set<Node>>();
     let succs = new Map<Node, Set<Node>>();
@@ -110,29 +185,89 @@ function intersect<T>(s1: Set<T>, s2: Set<T> | undefined) : Set<T> {
     if (!s2)
         return s1;
 
-    /* start from s1 and remove nodes that don't exist in s2 */
-    let ret = new Set(s1);
-    for (const node of s1) {
-        if (!s2.has(node))
-            ret.delete(node);
+    /* add elements that are present in both sets */
+    let ret = new Set<T>();
+    for (const elem of s1) {
+        if (s2.has(elem))
+            ret.add(elem);
     }
 
     return ret;
 }
 
-/* Gen(b) = variables defined in the block.
- * it is relatively straightforward in a minimal graph */
-function gen(node: Node): Set<Identifier> {
-    if (node.type === "assign")
-        return new Set([node.ast.i]);
-    return new Set();
+/* this helper will unify two sets */
+function union<T>(s1: Set<T>, s2: Set<T>): Set<T> {
+    /* simply iterate over one of them */
+    let ret = new Set(s1);
+    for (const elem of s2)
+        ret.add(elem);
+    return ret;
+}
+
+/* this helper will subtract s2 from s1 (S1 \ S2) */
+function subtract<T>(s1: Set<T>, s2: Set<T>): Set<T> {
+    /* start from s1 and remove all elements in s2 */
+    let ret = new Set(s1);
+    for (const elem of s2)
+        ret.delete(elem);
+    return ret;
+}
+
+/* the configuration for wqAnalyze function */
+export type WQArgs<T> = {
+    /* initialization of the work queue and the working map */
+    init: (node: Node) => T,
+
+    /* the local update function */
+    local: (node: Node, ctx: { preds: Set<Node>, succs: Set<Node>},
+        wq: UniQueue<Node>, map: Map<Node, T>) => void,
+};
+
+/* generic wrapper around work queue algorithm. */
+export function wqAnalyze<T>(graph: Graph, args: WQArgs<T>): Map<Node, T> {
+    /* the map so far */
+    let map = new Map<Node, T>();
+
+    /* we employ a BFS with a work queue to continuously ripple changes until
+     * we reach the fixpoint */
+    let wq = newQueue<Node>();
+
+    /* fetch the utility maps from this graph */
+    let { preds, succs, allNodes } = buildGraphMaps(graph);
+
+    /* for all nodes, insert their initial value into the map and enqueue
+     * them into the workqueue */
+    for (const node of allNodes) {
+        map.set(node, args.init(node));
+        wq.enqueue(node);
+    }
+
+    /* for each node in workqueue, perform local update. this might add more
+     * nodes */
+    while (wq.size() > 0) {
+        /* extract node and its neighbor and call local update */
+        let cur = wq.dequeue()!;
+        let ctx = {
+            preds: preds.get(cur) ?? new Set(),
+            succs: succs.get(cur) ?? new Set()
+        };
+        args.local(cur, ctx, wq, map);
+    }
+
+    /* return the map */
+    return map;
 }
 
 /* this function will map each block to its defined vars */
-export function analyzeDefinedVars(graph: Graph, input: Identifier)
-        : Map<Node, DefinedVars> {
-    /* fetch the utility maps from this graph */
-    let { preds, succs, allNodes } = buildGraphMaps(graph);
+export function analyzeDefinedVars(graph: Graph,
+                                   input: Identifier): Map<Node, DefinedVars> {
+    /* Gen(b) = variables defined in the block.
+     * it is relatively straightforward in a minimal graph */
+    function gen(node: Node): Set<Identifier> {
+        if (node.type === "assign")
+            return new Set([node.ast.i]);
+        return new Set();
+    }
 
     /* utility type to define a DefinedVars struct that accepts undefined sets
      * to indicate that they are yet uninitialized. (you may picture an
@@ -140,78 +275,61 @@ export function analyzeDefinedVars(graph: Graph, input: Identifier)
     type AlmostDefinedVars = Omit<DefinedVars, "in" | "out"> &
         { in: Set<Identifier> | undefined, out: Set<Identifier> | undefined };
 
-    /* the map so far. this map accepts an AlmostDefinedVars */
-    let map = new Map<Node, AlmostDefinedVars>();
+    /* get map from the generic wqAnalyze function */
+    let map = wqAnalyze<AlmostDefinedVars>(graph, {
+        init: (node) => {
+            /* our entry has the input var in the in variable set */
+            if (node === graph.entry)
+                return { in: new Set([input]), out: undefined };
+            return { in: undefined, out: undefined };
+        },
+        local: (node, { preds, succs }, wq, map) => {
+            /* get state, which surely exists due to our initialization */
+            let state: AlmostDefinedVars = map.get(node)!;
 
-    /* we employ a BFS with a work queue to continuously ripple changes until
-     * we reach the fixpoint */
-    let wq = newQueue<Node>();
+            /* build defIn from predecessors. this is the intersection between
+             * our current defIn and all the defOut of our predecessors */
+            let newIn: Set<Identifier> | undefined = state.in;
+            for (const pred of preds) {
+                /* predecessor surely has data in the map. if, however, it is
+                 * undefined, it is the universal set. we can continue */
+                let predOut = map.get(pred)!.out;
+                if (predOut === undefined)
+                    continue;
+                newIn = intersect(predOut, newIn);
+            }
 
-    /* initialize the map to prevent crashes when fetching state for
-     * predecessors. everybody has undefined sets as initialization values.
-     * also, enqueue all nodes in the work queue */
-    for (const node of allNodes) {
-        /* entry node must be tagged with input variable */
-        if (node === graph.entry) {
-            map.set(node, { in: new Set([input]), out: new Set([input]) });
-        } else {
-            map.set(node, { in: undefined, out: undefined });
-        }
-        wq.enqueue(node);
-    }
+            /* if newIn doesn't exist, it means either our predecessors were
+             * uninitalized, or we didn't have any. in such case, defIn is the
+             * empty set */
+            state.in = newIn ?? new Set();
 
-    /* start iterating */
-    while (wq.size() > 0) {
-        /* current node */
-        let cur = wq.dequeue()!;
+            /* build defOut with gen() function unified with current defIn */
+            let newOut = union(state.in, gen(node));
 
-        /* get state, which surely exists due to our initialization before */
-        let state: AlmostDefinedVars = map.get(cur)!;
-
-        /* build defIn from predecessors. this is the intersection between
-         * our current defIn and all the defOut of our predecessors */
-        let newIn: Set<Identifier> | undefined = state.in;
-        for (const pred of preds.get(cur) ?? new Set()) {
-            /* predecessor surely has data in the map. if, however, it is
-             * undefined, it is the universal set. we can continue */
-            let predOut = map.get(pred)!.out;
-            if (predOut === undefined)
-                continue;
-            newIn = intersect(predOut, newIn);
-        }
-
-        /* if newIn doesn't exist, it means either our predecessors were
-         * uninitalized, or we didn't have any. in such case, defIn is the
-         * empty set */
-        state.in = newIn ?? new Set();
-
-        /* build defOut with gen() function unified with current defIn */
-        let newOut: Set<Identifier> = new Set(state.in);
-        for (const generatedVar of gen(cur))
-            newOut.add(generatedVar);
-
-        /* see if there was a change in the newOut */
-        let changed = false;
-        if (state.out === undefined || newOut.size !== state.out.size) {
-            changed = true;
-        } else {
-            /* check items one by one */
-            for (const item of newOut) {
-                if (!state.out.has(item)) {
-                    changed = true;
-                    break;
+            /* see if there was a change in the newOut */
+            let changed = false;
+            if (state.out === undefined || newOut.size !== state.out.size) {
+                changed = true;
+            } else {
+                /* check items one by one */
+                for (const item of newOut) {
+                    if (!state.out.has(item)) {
+                        changed = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        /* if there was a change, set the newOut to our out variables and
-         * ripple the changes to the successors */
-        if (changed) {
-            state.out = newOut;
-            for (const succ of succs.get(cur) ?? new Set())
-                wq.enqueue(succ);
+            /* if there was a change, set the newOut to our out variables and
+             * ripple the changes to the successors */
+            if (changed) {
+                state.out = newOut;
+                for (const succ of succs)
+                    wq.enqueue(succ);
+            }
         }
-    }
+    });
 
     /* do a round of assertions and return map */
     for (const [_, definedVars] of map.entries()) {
@@ -221,13 +339,90 @@ export function analyzeDefinedVars(graph: Graph, input: Identifier)
     return map as Map<Node, DefinedVars>;
 }
 
+export function analyzeLiveVars(graph: Graph,
+                                output: Identifier): Map<Node, LiveVars> {
+
+    /* Gen(b) = variables used before any assignment.
+     * in the minimal graph, we just extract the used variables (excluding the
+     * assigned var) */
+    function gen(node: Node): Set<Identifier> {
+        /* skip blocks do not have vars... */
+        return node.ast ? extractUsedVarsCmd(node.ast) : new Set();
+    }
+
+    /* Kill(b) = variables assigned in the block.
+     * in the minimal graph, we only grab the variable used in an assignment */
+    function kill(node: Node): Set<Identifier> {
+        if (node.type === "assign")
+            return new Set([node.ast.i]);
+        return new Set();
+    }
+
+    return wqAnalyze(graph, {
+        init: (node) => {
+            if (node === graph.exit)
+                return { in: new Set(), out: new Set([output]) };
+            return { in: new Set(), out: new Set() };
+        },
+        local: (node, { preds, succs }, wq, map) => {
+            /* fetch current state */
+            let state: LiveVars = map.get(node)!;
+
+            /* fetch live variable that go out. this is the union between
+             * all the live variables that go in of the successors. if we don't
+             * have successors, newOut stays undefined (this is an exit node) */
+            let newOut: Set<Identifier> | undefined = undefined;
+            for (const succ of succs) {
+                /* surely the successor has data in the map */
+                let succIn = map.get(succ)!.in;
+                newOut = newOut ? union(newOut, succIn) : succIn;
+            }
+
+            /* if we had successors, update out variable. otherwise, do not do
+             * that (we are the exit node) */
+            if (newOut)
+                state.out = newOut;
+
+            /* we now build the variables going into this block, which is the
+             * union between Gen(b) and (Out(b) \ Kill(b)) */
+            let newIn = union(gen(node), subtract(state.out, kill(node)));
+
+            /* see if there was a change in the new in */
+            let changed = false;
+            if (state.in.size !== newIn.size) {
+                changed = true;
+            } else {
+                /* check items one by one */
+                for (const item of newIn) {
+                    if (!state.in.has(item)) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            /* if there was a change, set the newIn to our in variables and
+             * ripple the changes to the predecessors */
+            if (changed) {
+                state.in = newIn;
+                for (const pred of preds)
+                    wq.enqueue(pred);
+            }
+        }
+    });
+}
+
 /* export defined variables analysis as DOT graph */
 export function exportDefinedVarsToDOT(graph: Graph,
-                                       map: Map<Node, DefinedVars>,
+                                       map: Map<Node, VarSets>,
                                        showSkip: boolean = true): string {
-    return graphToDOT(graph.entry,
-        /* labelShape */
-        node => {
+    return graphToDOT({
+        entry: graph.entry,
+        labelShape: node => {
+            /* map should contain this node */
+            if (!map.has(node))
+                throw new RuntimeError("map doesn't have node");
+
             /* get calculated in and our vars */
             let inVars = map.get(node)!.in;
             let outVars = map.get(node)!.out;
@@ -259,13 +454,9 @@ export function exportDefinedVarsToDOT(graph: Graph,
 
             return [labelStrings.join("\\n"), shape];
         },
-
-        /* isBranching */
-        node => node.type === "cond",
-
-        /* getNext */
-        node => node.type === "cond" ? [node.true, node.false] : node.next,
-
-        /* skipElem */
-        showSkip ? undefined : node => node.type === "skip");
+        isBranching: node => node.type === "cond",
+        getNext: node => node.type === "cond" ? [node.true, node.false]
+            : node.next,
+        skipElem: showSkip ? undefined : node => node.type === "skip"
+    });
 }
