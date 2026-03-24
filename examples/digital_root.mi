@@ -1,0 +1,25 @@
+def main with input n output root as
+if n < 1 then
+    root := 0
+else (
+    while 9 < n do (
+        sum := 0;
+        temp := n;
+        
+        while 0 < temp do (
+            rem := temp;
+            div10 := 0;
+            
+            while 9 < rem do (
+                rem := rem - 10;
+                div10 := div10 + 1
+            );
+            
+            sum := sum + rem;
+            temp := div10
+        );
+        
+        n := sum
+    );
+    root := n
+)
