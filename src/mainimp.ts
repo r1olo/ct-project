@@ -9,7 +9,9 @@ import genGraph, { maximizeGraph,
                    exportBlockToDOT } from "./miniimp/graph";
 import { analyzeDefinedVars,
          analyzeLiveVars,
-         exportDefinedVarsToDOT } from "./miniimp/analysis";
+         analyzeReaching,
+         exportDefinedVarsToDOT,
+         exportReachingDefsToDOT } from "./miniimp/analysis";
 
 /* create a parser */
 const parser = new ArgumentParser({
@@ -41,6 +43,10 @@ group.add_argument("-al", "--analyze-live", {
     action: "store_true",
     help: "generate a live variable graph"
 });
+group.add_argument("-ar", "--analyze-reaching", {
+    action: "store_true",
+    help: "generate a reaching definitions graph"
+});
 group.add_argument("input_number", {
     nargs: "?",
     type: "int",
@@ -62,8 +68,9 @@ const args = parser.parse_args();
 
 const inputFile = args.file;
 const generateGraph = args.graph;
-const analyzeDefined = args.analyze_defined;
-const analyzeLive = args.analyze_live;
+const doAnalyzeDefined = args.analyze_defined;
+const doAnalyzeLive = args.analyze_live;
+const doAnalyzeReaching = args.analyze_reaching;
 const genMaxGraph = args.max_graph;
 const showSkip = !args.no_skip;
 const inputValue = args.input_number;
@@ -100,14 +107,18 @@ try {
         else
             dot = exportToDOT(graph, showSkip);
         console.log(dot);
-    } else if (analyzeDefined) {
+    } else if (doAnalyzeDefined) {
         let graph = genGraph(prog.cmd);
         let map = analyzeDefinedVars(graph, prog.in);
         console.log(exportDefinedVarsToDOT(graph, map, showSkip));
-    } else if (analyzeLive) {
+    } else if (doAnalyzeLive) {
         let graph = genGraph(prog.cmd);
         let map = analyzeLiveVars(graph, prog.out);
         console.log(exportDefinedVarsToDOT(graph, map, showSkip));
+    } else if (doAnalyzeReaching) {
+        let graph = genGraph(prog.cmd);
+        let map = analyzeReaching(graph, prog.in);
+        console.log(exportReachingDefsToDOT(graph, map, showSkip));
     } else {
         /* execute the program */
         const result = execProg(prog, inputValue);

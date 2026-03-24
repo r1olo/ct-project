@@ -8,10 +8,16 @@ import { BoolExpr, Cmd, Identifier, NumExpr,
 import { Graph, Node, graphToDOT } from "./graph";
 import { RuntimeError } from "../errors";
 
-/* various tags for enabling optimizations */
+/* the var sets tags for live/defined variable analyses */
 type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
 type DefinedVars = VarSets;
 type LiveVars = VarSets;
+
+/* the definitions set for the reaching definition analysis. the nodes
+ * must be of type assign, otherwise they can't possibly be definition nodes.
+ * in a minimimal graph (as explained below) a node is a definition */
+type DefNode = { type: "assign" } & Node;
+type DefSets = { in: Set<DefNode>, out: Set<DefNode> };
 
 /* a queue is needed for the work queue approach. this queue is special
  * because it keeps insertion order intact and at the same time disallows
@@ -219,7 +225,7 @@ export type WQArgs<T> = {
     init: (node: Node) => T,
 
     /* the local update function */
-    local: (node: Node, ctx: { preds: Set<Node>, succs: Set<Node>},
+    local: (node: Node, ctx: { preds: Set<Node>, succs: Set<Node> },
         wq: UniQueue<Node>, map: Map<Node, T>) => void,
 };
 
@@ -339,6 +345,7 @@ export function analyzeDefinedVars(graph: Graph,
     return map as Map<Node, DefinedVars>;
 }
 
+/* this function will map each block to its live vars */
 export function analyzeLiveVars(graph: Graph,
                                 output: Identifier): Map<Node, LiveVars> {
 
@@ -412,6 +419,117 @@ export function analyzeLiveVars(graph: Graph,
     });
 }
 
+/* this function will map each block to its list of in and out definitions.
+ * a definition, in the case of a minimal graph, is tagged with its own block
+ * that originates it. in other words, a Node reference IS a definition */
+export function analyzeReaching(graph: Graph,
+                                input: Identifier): Map<Node, DefSets> {
+    /* pre-compute global definitions (each variable name is mapped to the
+     * originating definition/node) */
+    let defsByVar = new Map<Identifier, Set<DefNode>>();
+
+    /* Gen(b) = definitions generated in the block. for a minimal graph,
+     * it just returns the node itself */
+    function gen(node: Node): Set<DefNode> {
+        /* only assign nodes are definitions */
+        if (node.type === "assign")
+            return new Set([node]);
+        return new Set();
+    }
+
+    /* Kill(b) = all other definitions for the only variable assigned in
+     * this block. we don't care about this same block's "other definitions"
+     * because this is a minimal graph */
+    function kill(node: Node): Set<DefNode> {
+        /* we only work on assign nodes */
+        if (node.type !== "assign")
+            return new Set();
+
+        /* this should never happen */
+        if (!defsByVar.has(node.ast.i))
+            throw new RuntimeError(`ghost variable ${node.ast.i}`);
+
+        /* we only add to the kill set the other definition nodes for this
+         * variable that are not the current node */
+        let ret = new Set<DefNode>;
+        for (const defNode of defsByVar.get(node.ast.i)!) {
+            if (defNode !== node)
+                ret.add(defNode);
+        }
+
+        return ret;
+    }
+
+    /* return the map from the generic wqAnalyze wrapper */
+    return wqAnalyze(graph, {
+        init: (node) => {
+            /* we build our defsByVar considering assign nodes */
+            if (node.type === "assign") {
+                if (!defsByVar.has(node.ast.i))
+                    defsByVar.set(node.ast.i, new Set());
+                defsByVar.get(node.ast.i)!.add(node);
+            }
+
+            /* return the initialization node */
+            if (node === graph.entry) {
+                /* we need to inject a fake node to represent the definition
+                 * for the input variable (note: smart but risky!!) */
+                let fakeInput: DefNode = { type: "assign" } as DefNode;
+                if (!defsByVar.has(input))
+                    defsByVar.set(input, new Set());
+                defsByVar.get(input)!.add(fakeInput);
+                return { in: new Set([fakeInput]), out: new Set() };
+            }
+
+            /* default init */
+            return { in: new Set(), out: new Set() };
+        },
+        local: (node, { preds, succs }, wq, map) => {
+            /* fetch current state */
+            let state = map.get(node)!;
+
+            /* fetch definitions that go in. this is the union between
+             * all outgoing definitions from the predecessors */
+            let newIn: Set<DefNode> | undefined = undefined;
+            for (const pred of preds) {
+                /* surely pred has something in the map */
+                let predOut = map.get(pred)!.out;
+                newIn = newIn ? union(newIn, predOut) : predOut;
+            }
+
+            /* if newIn is not undefined, assign it */
+            if (newIn)
+                state.in = newIn;
+
+            /* we now build the definitions going out this block, which is the
+             * union between Gen(b) and (ReachIn(b) \ Kill(b)) */
+            let newOut = union(gen(node), subtract(state.in, kill(node)));
+
+            /* see if there was a change in the newOut */
+            let changed = false;
+            if (newOut.size !== state.out.size) {
+                changed = true;
+            } else {
+                /* check items one by one */
+                for (const item of newOut) {
+                    if (!state.out.has(item)) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            /* if changed, set out definitions to newOut and ripple changes
+             * to its successors */
+            if (changed) {
+                state.out = newOut;
+                for (const succ of succs)
+                    wq.enqueue(succ);
+            }
+        }
+    });
+}
+
 /* export defined variables analysis as DOT graph */
 export function exportDefinedVarsToDOT(graph: Graph,
                                        map: Map<Node, VarSets>,
@@ -451,6 +569,70 @@ export function exportDefinedVarsToDOT(graph: Graph,
 
             /* specify out variables */
             labelStrings.push("out = {" + [...outVars].join(",") + "}");
+
+            return [labelStrings.join("\\n"), shape];
+        },
+        isBranching: node => node.type === "cond",
+        getNext: node => node.type === "cond" ? [node.true, node.false]
+            : node.next,
+        skipElem: showSkip ? undefined : node => node.type === "skip"
+    });
+}
+
+/* export reaching definitions as DOT graph */
+export function exportReachingDefsToDOT(graph: Graph,
+                                        map: Map<Node, DefSets>,
+                                        showSkip: boolean = true): string {
+    /* for every new node we encounter, we assign a numeric ID to display
+     * in the label */
+    let nodeIds = new Map<Node, number>();
+    let idCounter = 0;
+
+    /* quick lambda to get the ID for a node */
+    const getNodeId = (node: Node): number => {
+        if (nodeIds.has(node))
+            return nodeIds.get(node)!;
+        nodeIds.set(node, idCounter);
+        return idCounter++;
+    }
+
+    return graphToDOT({
+        entry: graph.entry,
+        labelShape: node => {
+            if (!map.has(node))
+                throw new RuntimeError("map doesn't have a node");
+
+            /* get calculated in and out definitions */
+            let inDefs = map.get(node)!.in;
+            let outDefs = map.get(node)!.out;
+
+            /* default shape is box, while label must be assembled */
+            let labelStrings: string[] = [];
+            let shape: string = "box";
+
+            /* push the in definitions by ID */
+            labelStrings.push("in = {" + [...inDefs].map(n => getNodeId(n)) +
+                              "}");
+
+            /* reconstruct source code based on AST */
+            switch (node.type) {
+                case "skip":
+                    labelStrings.push("skip");
+                    break;
+                case "assign":
+                    /* for an assign node, we must use the ID prefix */
+                    labelStrings.push(`[${getNodeId(node)}]${node.ast.i} ` +
+                                      `:= ${stringifyNum(node.ast.e)}`);
+                    break;
+                case "cond":
+                    labelStrings.push(`(${stringifyBool(node.ast.cond)})?`);
+                    shape = "diamond";
+                    break;
+            }
+
+            /* specify out definitions */
+            labelStrings.push("out = {" + [...outDefs].map(n => getNodeId(n)) +
+                              "}");
 
             return [labelStrings.join("\\n"), shape];
         },
