@@ -142,11 +142,8 @@ function extractUsedVarsCmd(cmd: Cmd): Set<IdentifierExpr> {
 /* wrapper around the helper above that returns only strings instead of
  * whole AST nodes */
 function extractUsedVarsCmdId(cmd: Cmd): Set<Identifier> {
-    let ret = new Set<Identifier>();
-    let usedVars = extractUsedVarsCmd(cmd);
-    for (const usedVar of usedVars)
-        ret.add(usedVar.i);
-    return ret;
+    /* we only care about the string identifiers */
+    return new Set([...extractUsedVarsCmd(cmd)].map(e => e.i));
 }
 
 /* this helper will scan the graph and build utility maps that can be
@@ -374,7 +371,7 @@ export function analyzeLiveVars(graph: Graph,
      * in the minimal graph, we just extract the used variables (excluding the
      * assigned var) */
     function gen(node: Node): Set<Identifier> {
-        /* skip blocks do not have vars... */
+        /* fake skip blocks do not have vars... */
         return node.ast ? extractUsedVarsCmdId(node.ast) : new Set();
     }
 
