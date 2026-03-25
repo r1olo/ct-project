@@ -434,10 +434,10 @@ export function maximizeGraph(graph: Graph): BlockGraph {
          * anyway so this is technically useless */
         visited.set(node, block);
 
-        /* add the node's command to our current block. we only insert real
-         * skips, ignoring fake ones */
-        if (node.ast)
-            block.ast.push(node.ast);
+        /* add the node's command to our current block. the ast exists because
+         * fake skips are handled separately, meaning this MUST be a real skip
+         * and as such must be included */
+        block.ast.push(node.ast!);
 
         /* if we have a next node, "include" it into our current block */
         if (node.next)
