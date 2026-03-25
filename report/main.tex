@@ -1,8 +1,9 @@
-\documentclass[12pt]{report}
+\documentclass[12pt]{article}
+\usepackage{parskip}
 
 \author{Andrea Riolo Vinciguerra}
-\title{MiniFun \& MiniImp Compiler}
-\date{}
+\title{Compilation Techniques: Laboratory Project\\ Project Report}
+\date{\today}
 
 \begin{document}
 
@@ -10,10 +11,96 @@
 \tableofcontents
 \clearpage
 
-block graph has 'merge' block to handle the case where, after an if, there's
-the end of the program. without 'merge' block, we would have an empty linear
-block (fake skip is not a command to display). while it has been done mainly
-for debugging purposes, merge and linear blocks are fundamentally equivalent to
-each other while encoding the difference needed for SSA-based algorithms.
+\section{Introduction}
+
+This project is organized in a single codebase that houses two compilers:
+MiniImp and MiniFun. While both share common background code, the core logic is
+kept strictly separate from the main user features. This setup allows users to
+easily choose between generating a control flow graph, running an interactive
+interpreter, or executing a code file.
+
+A main focus of the design is modularity. By keeping the code well-organized and
+adaptable, the system is much easier to maintain and expand over time. Comments
+are included (more or less helpful) throughout the source files to make
+comprehension easier.
+
+The code is organized by separating distinct functional blocks into different
+files. For example, the core evaluator (or interpreter) and the Abstract Syntax
+Tree definitions for both compilers are stored in a file called
+\texttt{engine.ts}. The rest of the functionality builds upon this file. For
+example, MiniImp extends this core engine to construct its control flow graph
+and handle optimizations, while MiniFun supports a complete polymorphic type
+system.
+
+I chose TypeScript as the programming language for two main reasons. First, I
+wanted the opportunity to master a language I was less familiar with. Second,
+TypeScript is excellent at handling union types. This feature (used extensively
+throughout the program) makes writing compiler code much simpler by avoiding the
+bulky, complex structures often needed in languages like C++ or Rust.
+
+Because Node.js works smoothly across different operating systems, the project
+can be packaged into a single, easy-to-run executable file for both macOS and
+Linux. On Windows, however, the operating system does not support shebangs (the
+special line of code that automatically tells the system how to run a script).
+As a result, Windows users need to run the program manually by invoking the
+\texttt{node} command.
+
+\section{Running the code}
+
+The software can be run in two ways: automatically or manually. The automatic
+method is designed specifically for Linux or macOS. Instead, the manual approach
+works on any operating system.
+
+Either approach requires that Node.js and its package manager, \texttt{npm}, are
+installed and properly configured in the system's \texttt{PATH}.
+
+\subsection{Automatic run}
+
+Inside the main project folder, there is a helpful script called
+\texttt{run.sh}. This script handles the setup automatically by downloading the
+required files, building the chosen compiler (MiniImp or MiniFun), and launching
+the program.
+
+Running either compiler is straightforward. For example, to start MiniImp, this
+command is sufficient:
+\begin{verbatim}
+$ ./run.sh miniimp --help
+\end{verbatim}
+
+Similarly, for MiniFun:
+\begin{verbatim}
+$ ./run.sh minifun --help
+\end{verbatim}
+
+Any extra instructions or arguments should be typed directly after the
+compiler's name. As shown in the examples above, adding the \texttt{--help} flag
+is a great way to see a full list of all the available commands.
+
+\subsection{Manual compilation}
+
+Manual compilation is available. In such case, these commands must be executed
+upon downloading the repository:
+\begin{verbatim}
+$ npm ci
+$ npm run build:miniimp     # or npm run build:minifun
+$ dist/miniimp --help       # or dist/minifun --help
+\end{verbatim}
+
+For Windows, the last step involves invoking \texttt{node} explicitly, like so:
+\begin{verbatim}
+$ node dist/miniimp --help  # or node dist/minifun --help
+\end{verbatim}
+
+\section{MiniFun: Functional Language}
+
+MiniFun is a functional language supporting three types of first-class values:
+closures (functions that store the environment at the time of definition),
+integers and booleans. It supports let bindings and recursion.
+
+%block graph has 'merge' block to handle the case where, after an if, there's
+%the end of the program. without 'merge' block, we would have an empty linear
+%block (fake skip is not a command to display). while it has been done mainly
+%for debugging purposes, merge and linear blocks are fundamentally equivalent to
+%each other while encoding the difference needed for SSA-based algorithms.
 
 \end{document}

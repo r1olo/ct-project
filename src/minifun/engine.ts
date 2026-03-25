@@ -4,7 +4,7 @@
 */
 
 import { SourceSpan } from "../diag";
-import { RuntimeError } from "../errors";
+import { EvalError } from "../errors";
 
 /* identifier type */
 export type Identifier = string;
@@ -60,19 +60,19 @@ export interface Environment {
 function assertBool(v: Value): asserts v is boolean {
     /* TODO LINE SPECIFIER */
     if (typeof v !== "boolean")
-        throw new RuntimeError(`value ${v} is not boolean`);
+        throw new EvalError(`value ${v} is not boolean`);
 }
 
 function assertNumber(v: Value): asserts v is number {
     /* TODO LINE SPECIFIER */
     if (typeof v !== "number")
-        throw new RuntimeError(`value ${v} is not number`);
+        throw new EvalError(`value ${v} is not number`);
 }
 
 function assertClosure(v: Value): asserts v is Closure {
     /* TODO LINE SPECIFIER */
     if (v === null || typeof v !== "object")
-        throw new RuntimeError(`value ${v} is not a closure`);
+        throw new EvalError(`value ${v} is not a closure`);
 }
 
 /* fetch value from environment or error out */
@@ -80,7 +80,7 @@ function readValue(id: Identifier, env: Environment): Value {
     /* TODO LINE SPECIFIER */
     let val = env.read(id);
     if (val === undefined)
-        throw new RuntimeError(`unbound variable '${id}'`);
+        throw new EvalError(`unbound variable '${id}'`);
     return val;
 }
 

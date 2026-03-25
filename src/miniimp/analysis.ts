@@ -3,13 +3,23 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { BoolExpr, Cmd, Identifier, NumExpr,
+import { BoolExpr, Cmd, Identifier, NumExpr, Prog,
          stringifyNum, stringifyBool } from "./engine";
-import { Graph, Node, graphToDOT } from "./graph";
+import genGraph, { Graph, Node, graphToDOT } from "./graph";
+import { DiagnosticError } from "../diag";
 import { RuntimeError } from "../errors";
 
+/* the result of a validation or check */
+type ValidationResult =
+    | { ok: true }
+    | { ok: false, err: DiagnosticError };
+
+/* Identifier NumExpr. this encapsulates an identifier AST node. used for
+ * in the diagnostic system when showing the erroneous variable */
+type IdentifierExpr = { type: "id" } & NumExpr;
+
 /* the var sets tags for live/defined variable analyses */
-type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
+export type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
 type DefinedVars = VarSets;
 type LiveVars = VarSets;
 
@@ -60,14 +70,15 @@ function newQueue<T>(): UniQueue<T> {
 
 /* extract all used variables from a NumExpr. needed for calculation of gen and
  * kill functions for analyses */
-function extractUsedVarsNumExpr(expr: NumExpr): Set<Identifier> {
-    let vars = new Set<Identifier>();
-    const addToVars = (set: Set<Identifier>) => {
+function extractUsedVarsNumExpr(expr: NumExpr): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
         set.forEach(v => vars.add(v));
     }
     switch (expr.type) {
         case "id":
-            vars.add(expr.i);
+            /* add this own expression */
+            vars.add(expr);
             break;
         case "add":
         case "sub":
@@ -81,9 +92,9 @@ function extractUsedVarsNumExpr(expr: NumExpr): Set<Identifier> {
 
 /* extract all used variables from a BoolExpr. needed for calculation of gen and
  * kill functions for analyses */
-function extractUsedVarsBoolExpr(expr: BoolExpr): Set<Identifier> {
-    let vars = new Set<Identifier>();
-    const addToVars = (set: Set<Identifier>) => {
+function extractUsedVarsBoolExpr(expr: BoolExpr): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
         set.forEach(v => vars.add(v));
     }
     switch (expr.type) {
@@ -104,9 +115,9 @@ function extractUsedVarsBoolExpr(expr: BoolExpr): Set<Identifier> {
 
 /* extract all used variables from a Cmd. needed for calculation of gen and
  * kill functions for analyses */
-function extractUsedVarsCmd(cmd: Cmd): Set<Identifier> {
-    let vars = new Set<Identifier>();
-    const addToVars = (set: Set<Identifier>) => {
+function extractUsedVarsCmd(cmd: Cmd): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
         set.forEach(v => vars.add(v));
     }
     switch (cmd.type) {
@@ -126,6 +137,16 @@ function extractUsedVarsCmd(cmd: Cmd): Set<Identifier> {
             break;
     }
     return vars;
+}
+
+/* wrapper around the helper above that returns only strings instead of
+ * whole AST nodes */
+function extractUsedVarsCmdId(cmd: Cmd): Set<Identifier> {
+    let ret = new Set<Identifier>();
+    let usedVars = extractUsedVarsCmd(cmd);
+    for (const usedVar of usedVars)
+        ret.add(usedVar.i);
+    return ret;
 }
 
 /* this helper will scan the graph and build utility maps that can be
@@ -354,7 +375,7 @@ export function analyzeLiveVars(graph: Graph,
      * assigned var) */
     function gen(node: Node): Set<Identifier> {
         /* skip blocks do not have vars... */
-        return node.ast ? extractUsedVarsCmd(node.ast) : new Set();
+        return node.ast ? extractUsedVarsCmdId(node.ast) : new Set();
     }
 
     /* Kill(b) = variables assigned in the block.
@@ -531,9 +552,9 @@ export function analyzeReaching(graph: Graph,
 }
 
 /* export defined variables analysis as DOT graph */
-export function exportDefinedVarsToDOT(graph: Graph,
-                                       map: Map<Node, VarSets>,
-                                       showSkip: boolean = true): string {
+export function exportVarSetsToDOT(graph: Graph,
+                                   map: Map<Node, VarSets>,
+                                   showSkip: boolean = true): string {
     return graphToDOT({
         entry: graph.entry,
         labelShape: node => {
@@ -641,4 +662,44 @@ export function exportReachingDefsToDOT(graph: Graph,
             : node.next,
         skipElem: showSkip ? undefined : node => node.type === "skip"
     });
+}
+
+/* check undefined vars by scrubbing the defined vars map */
+export function checkUndefined(defVarsMap: Map<Node, DefinedVars>)
+                               : ValidationResult {
+    /* iterate through the defined vars map in search of one specific
+     * condition: the node's AST must use a variable that does not belong to its
+     * inVar set */
+    for (const node of defVarsMap.keys()) {
+        /* do not care about skips */
+        if (!node.ast)
+            continue;
+
+        /* extract the variables used by this instruction */
+        let usedVars = extractUsedVarsCmd(node.ast);
+
+        /* fetch the defined variables at the start of this block */
+        let inVars = defVarsMap.get(node)!.in;
+
+        /* check if usedVars belong to inVars and throw otherwise */
+        for (const usedVar of usedVars) {
+            if (!inVars.has(usedVar.i)) {
+                let err = new DiagnosticError(`undefined variable '${usedVar.i}'`,
+                                                usedVar.span);
+                return { ok: false, err };
+            }
+        }
+    }
+
+    return { ok: true };
+}
+
+/* default function to fully check a program before sending it to exec stage */
+export default function assertProg(prog: Prog): void | never {
+    /* for now, only check for undefined variables */
+    let graph = genGraph(prog.cmd);
+    let defVarsMap = analyzeDefinedVars(graph, prog.in);
+    let validation = checkUndefined(defVarsMap);
+    if (!validation.ok)
+        throw validation.err;
 }

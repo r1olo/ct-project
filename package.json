@@ -8,7 +8,7 @@
   "scripts": {
     "build:minifun:sourcemap": "tsc --noEmit && esbuild src/mainfun.ts --bundle --outfile=dist/minifun-debug --platform=node --sourcemap --minify --banner:js=\"#!/usr/bin/env -S node --enable-source-maps\" && chmod +x dist/minifun-debug",
     "build:miniimp:sourcemap": "tsc --noEmit && esbuild src/mainimp.ts --bundle --outfile=dist/miniimp-debug --platform=node --sourcemap --minify --banner:js=\"#!/usr/bin/env -S node --enable-source-maps\" && chmod +x dist/miniimp-debug",
-    "build:minifun": "tsc --noEmit && esbuild src/mainimp.ts --bundle --outfile=dist/minifun --platform=node --minify --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/minifun",
+    "build:minifun": "tsc --noEmit && esbuild src/mainfun.ts --bundle --outfile=dist/minifun --platform=node --minify --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/minifun",
     "build:miniimp": "tsc --noEmit && esbuild src/mainimp.ts --bundle --outfile=dist/miniimp --platform=node --minify --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/miniimp",
     "clean": "rm -r dist"
   },

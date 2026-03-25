@@ -1,38 +1,34 @@
 /* group all errors here */
+export class MiniError extends Error {
+    public readonly formatString: string;
 
-/* runtime error. this should never happen and indicates a bug in the
- * compiler that should be solved ASAP!!! */
-export class RuntimeError extends Error {
-    constructor(msg: string) {
+    constructor(msg: string, format: string) {
         super(msg);
-        this.name = "RuntimeError";
+        this.name = "MiniError";
+        this.formatString = format;
     }
 
     format(): string {
-        return [ `A runtime error has occurred, please report to developer.`,
-                  this.stack ?? "Stack unavailable" ].join("\n");
+        return [ this.formatString,
+                 this.stack ?? "Stack unavailable" ].join("\n");
     }
 }
 
-/* a parsing error */
-export class ParseError extends Error {
+/* runtime error. this should never happen and indicates a bug in the
+ * compiler that should be solved ASAP!!! */
+export class RuntimeError extends MiniError {
     constructor(msg: string) {
-        super(msg);
-        this.name = "ParseError";
+        super(msg, "A runtime error has occurred. Please report to developer.");
+        this.name = "RuntimeError";
     }
 }
 
-/* an evaluation error */
-export class EvalError extends Error {
+/* an evaluation error. occurs if the interpreter is called with a
+ * semantically bad program and no analysis was made beforehand */
+export class EvalError extends MiniError {
     constructor(msg: string) {
-        super(msg);
+        super(msg, "An evaluation error has occurred. Have you validated the " +
+                   "input first?");
         this.name = "EvalError";
-    }
-}
-
-export class TypeError extends Error {
-    constructor(msg: string) {
-        super(msg);
-        this.name = "TypeError";
     }
 }

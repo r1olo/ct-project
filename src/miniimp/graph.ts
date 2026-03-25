@@ -23,7 +23,7 @@ export type Node =
  
     /* these two inherit properties from the AST */
     | { type: "assign", next?: Node, ast: AssignCmd              }
-    | { type: "cond",   true: Node,  false: Node,   ast: CondCmd }
+    | { type: "cond",   true: Node,  false: Node,   ast: CondCmd };
 
 /* a "simple" node is a non-branching node (it has next? property, hence
  * the extract). synonym of:
