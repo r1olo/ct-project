@@ -294,6 +294,13 @@ export class Parser {
         /* starting token for the expression */
         let startToken = this.peek();
 
+        /* support expressions inside parentheses as whole bool expressions */
+        if (this.match("LPAREN")) {
+            let expr = this.parseBoolExpr();
+            this.consume("RPAREN", "expected ')' after boolean expression");
+            return expr;
+        }
+
         /* scalar values */
         if (this.match("TRUE"))
             return {
