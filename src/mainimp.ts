@@ -4,16 +4,15 @@ import { DiagnosticError } from "./diag";
 import { MiniError } from "./errors";
 import execProg from "./miniimp/engine";
 import parse from "./miniimp/parser";
-import genGraph,
-     { maximizeGraph,
-       exportToDOT,
-       exportBlockToDOT } from "./miniimp/graph";
+import { maximizeGraph,
+         exportGraph,
+         exportBlockGraph } from "./miniimp/graph";
 import assertProg,
-     { analyzeDefinedVars,
-       analyzeLiveVars,
-       analyzeReaching,
-       exportVarSetsToDOT,
-       exportReachingDefsToDOT } from "./miniimp/analysis";
+     { analyzeProg,
+       exportDefinedVars,
+       exportLiveVars,
+       exportReachingDefs } from "./miniimp/analysis";
+import optimize from "./miniimp/opt";
 
 /* create a parser */
 const parser = new ArgumentParser({
@@ -69,6 +68,10 @@ parser.add_argument("-n", "--no-skip", {
     action: "store_true",
     help: "do not display skips in graph image"
 });
+parser.add_argument("-o", "--optimize", {
+    action: "store_true",
+    help: "optimize the graph"
+});
 
 /* parse arguments */
 const args = parser.parse_args();
@@ -96,23 +99,23 @@ try {
     const prog = parse(sourceCode);
     
     if (args.graph) {
-        /* generate and print the CFG in DOT format based on the selected
-         * flags */
-        let graph = genGraph(prog.cmd);
+        /* analyze the program and possibly optimize it */
+        let analy = analyzeProg(prog);
+        if (args.optimize)
+            optimize(analy);
+
+        /* generate the requested graph */
         let dot: string;
         if (args.maximize)
-            dot = exportBlockToDOT(maximizeGraph(graph), !args.no_skip);
+            dot = exportBlockGraph(maximizeGraph(analy.graph), !args.no_skip);
         else if (args.analyze_defined)
-            dot = exportVarSetsToDOT(graph,
-                    analyzeDefinedVars(graph, prog.in), !args.no_skip);
+            dot = exportDefinedVars(analy, !args.no_skip);
         else if (args.analyze_live)
-            dot = exportVarSetsToDOT(graph,
-                    analyzeLiveVars(graph, prog.out), !args.no_skip);
+            dot = exportLiveVars(analy, !args.no_skip);
         else if (args.analyze_reaching)
-            dot = exportReachingDefsToDOT(graph,
-                    analyzeReaching(graph, prog.in), !args.no_skip);
+            dot = exportReachingDefs(analy, !args.no_skip);
         else
-            dot = exportToDOT(graph, !args.no_skip);
+            dot = exportGraph(analy.graph, !args.no_skip);
 
         /* finally print this graph */
         console.log(dot);

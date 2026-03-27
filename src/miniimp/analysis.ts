@@ -3,9 +3,17 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { BoolExpr, Cmd, Identifier, NumExpr, Prog,
-         stringifyNum, stringifyBool } from "./engine";
-import genGraph, { Graph, Node, graphToDOT } from "./graph";
+import { Identifier,
+         Prog,
+         stringifyNum,
+         stringifyBool } from "./engine";
+import genGraph,
+     { Graph,
+       Node,
+       buildGraphMaps,
+       extractUsedVarsCmd,
+       extractUsedVarsCmdId,
+       graphToDOT } from "./graph";
 import { DiagnosticError } from "../diag";
 import { RuntimeError } from "../errors";
 
@@ -14,12 +22,8 @@ type ValidationResult =
     | { ok: true }
     | { ok: false, err: DiagnosticError };
 
-/* Identifier NumExpr. this encapsulates an identifier AST node. used for
- * in the diagnostic system when showing the erroneous variable */
-type IdentifierExpr = { type: "id" } & NumExpr;
-
 /* the var sets tags for live/defined variable analyses */
-export type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
+type VarSets = { in: Set<Identifier>, out: Set<Identifier> };
 type DefinedVars = VarSets;
 type LiveVars = VarSets;
 
@@ -29,10 +33,22 @@ type LiveVars = VarSets;
 type DefNode = { type: "assign" } & Node;
 type DefSets = { in: Set<DefNode>, out: Set<DefNode> };
 
+/* this is the global accessible analysis result. instead of annotating
+ * each graph node with its sets, a map approach is chosen to allow
+ * modularity for future additions */
+export type Analysis = {
+    in:           Identifier,
+    out:          Identifier,
+    graph:        Graph,
+    definedVars:  Map<Node, DefinedVars>,
+    liveVars:     Map<Node, LiveVars>,
+    reachingDefs: Map<Node, DefSets>,
+};
+
 /* a queue is needed for the work queue approach. this queue is special
  * because it keeps insertion order intact and at the same time disallows
  * double insertion of the same element */
-export interface UniQueue<T> {
+interface UniQueue<T> {
     enqueue(item: T): void;
     dequeue() : T | undefined;
     peek() : T | undefined;
@@ -66,140 +82,6 @@ function newQueue<T>(): UniQueue<T> {
             return set.size;
         }
     }
-}
-
-/* extract all used variables from a NumExpr. needed for calculation of gen and
- * kill functions for analyses */
-function extractUsedVarsNumExpr(expr: NumExpr): Set<IdentifierExpr> {
-    let vars = new Set<IdentifierExpr>();
-    const addToVars = (set: Set<IdentifierExpr>) => {
-        set.forEach(v => vars.add(v));
-    }
-    switch (expr.type) {
-        case "id":
-            /* add this own expression */
-            vars.add(expr);
-            break;
-        case "add":
-        case "sub":
-        case "mul":
-            addToVars(extractUsedVarsNumExpr(expr.a));
-            addToVars(extractUsedVarsNumExpr(expr.b));
-            break;
-    }
-    return vars;
-}
-
-/* extract all used variables from a BoolExpr. needed for calculation of gen and
- * kill functions for analyses */
-function extractUsedVarsBoolExpr(expr: BoolExpr): Set<IdentifierExpr> {
-    let vars = new Set<IdentifierExpr>();
-    const addToVars = (set: Set<IdentifierExpr>) => {
-        set.forEach(v => vars.add(v));
-    }
-    switch (expr.type) {
-        case "and":
-            addToVars(extractUsedVarsBoolExpr(expr.a));
-            addToVars(extractUsedVarsBoolExpr(expr.b));
-            break;
-        case "not":
-            addToVars(extractUsedVarsBoolExpr(expr.e));
-            break;
-        case "lt":
-            addToVars(extractUsedVarsNumExpr(expr.a));
-            addToVars(extractUsedVarsNumExpr(expr.b));
-            break;
-    }
-    return vars;
-}
-
-/* extract all used variables from a Cmd. needed for calculation of gen and
- * kill functions for analyses */
-function extractUsedVarsCmd(cmd: Cmd): Set<IdentifierExpr> {
-    let vars = new Set<IdentifierExpr>();
-    const addToVars = (set: Set<IdentifierExpr>) => {
-        set.forEach(v => vars.add(v));
-    }
-    switch (cmd.type) {
-        case "assign":
-            /* we skip cmd.i, which is the assigned variable!!!. extract
-             * variables used in the numeric expression */
-            addToVars(extractUsedVarsNumExpr(cmd.e));
-            break;
-        case "if":
-        case "while":
-            /* extract variables used in the boolean condition */
-            addToVars(extractUsedVarsBoolExpr(cmd.cond));
-            break;
-        case "seq":
-        case "skip":
-            /* seq's and skip's have no variables (they are commands) */
-            break;
-    }
-    return vars;
-}
-
-/* wrapper around the helper above that returns only strings instead of
- * whole AST nodes */
-function extractUsedVarsCmdId(cmd: Cmd): Set<Identifier> {
-    /* we only care about the string identifiers */
-    return new Set([...extractUsedVarsCmd(cmd)].map(e => e.i));
-}
-
-/* this helper will scan the graph and build utility maps that can be
- * used in analyses. for example, among the others, a map of the predecessors
- * for every node */
-function buildGraphMaps(graph: Graph): { preds: Map<Node, Set<Node>>,
-                                         succs: Map<Node, Set<Node>>,
-                                         allNodes: Set<Node> } {
-    /* these are the maps */
-    let preds = new Map<Node, Set<Node>>();
-    let succs = new Map<Node, Set<Node>>();
-    let visited = new Set<Node>();
-
-    /* little dfs to traverse the whole graph */
-    function traverse(node: Node) {
-        /* prevent cyclical traverse */
-        if (visited.has(node))
-            return;
-        visited.add(node);
-
-        /* quick lambda to add an edge between two nodes. this affects the
-         * preds set of the next node (to) and the succs set of ourselves
-         * (from) */
-        const addEdge = (from: Node, to: Node) => {
-            /* init sets first */
-            if (!succs.has(from))
-                succs.set(from, new Set());
-            if (!preds.has(to))
-                preds.set(to, new Set());
-
-            /* link the two nodes */
-            succs.get(from)!.add(to);
-            preds.get(to)!.add(from);
-        }
-
-        /* if it's a conditional, we have 2 possible branches */
-        if (node.type === "cond") {
-            /* add the edges to its 2 branches */
-            addEdge(node, node.true);
-            addEdge(node, node.false);
-
-            /* keep traversing down */
-            traverse(node.true);
-            traverse(node.false);
-        } else if (node.next) {
-            /* add the edge to its only branch */
-            addEdge(node, node.next);
-
-            /* keep traversing down */
-            traverse(node.next);
-        }
-    }
-
-    /* traverse the entry and return the structures */
-    traverse(graph.entry);
-    return { preds, succs, allNodes: visited };
 }
 
 /* this helper will intersect two sets where one is optional, indicating
@@ -238,7 +120,7 @@ function subtract<T>(s1: Set<T>, s2: Set<T>): Set<T> {
 }
 
 /* the configuration for wqAnalyze function */
-export type WQArgs<T> = {
+type WQArgs<T> = {
     /* initialization of the work queue and the working map */
     init: (node: Node) => T,
 
@@ -248,7 +130,7 @@ export type WQArgs<T> = {
 };
 
 /* generic wrapper around work queue algorithm. */
-export function wqAnalyze<T>(graph: Graph, args: WQArgs<T>): Map<Node, T> {
+function wqAnalyze<T>(graph: Graph, args: WQArgs<T>): Map<Node, T> {
     /* the map so far */
     let map = new Map<Node, T>();
 
@@ -549,9 +431,9 @@ export function analyzeReaching(graph: Graph,
 }
 
 /* export defined variables analysis as DOT graph */
-export function exportVarSetsToDOT(graph: Graph,
-                                   map: Map<Node, VarSets>,
-                                   showSkip: boolean = true): string {
+function genericExportVarSets(graph: Graph,
+                              map: Map<Node, VarSets>,
+                              showSkip: boolean = true): string {
     return graphToDOT({
         entry: graph.entry,
         labelShape: node => {
@@ -597,10 +479,25 @@ export function exportVarSetsToDOT(graph: Graph,
     });
 }
 
+/* wrapper for defined vars */
+export function exportDefinedVars(analy: Analysis,
+                                  showSkip: boolean = true): string {
+    return genericExportVarSets(analy.graph, analy.definedVars, showSkip);
+}
+
+/* wrapper for live vars */
+export function exportLiveVars(analy: Analysis,
+                               showSkip: boolean = true): string {
+    return genericExportVarSets(analy.graph, analy.liveVars, showSkip);
+}
+
 /* export reaching definitions as DOT graph */
-export function exportReachingDefsToDOT(graph: Graph,
-                                        map: Map<Node, DefSets>,
+export function exportReachingDefs(analy: Analysis,
                                         showSkip: boolean = true): string {
+    /* extract info we need for this type of extraction */
+    const graph = analy.graph;
+    const map = analy.reachingDefs;
+
     /* for every new node we encounter, we assign a numeric ID to display
      * in the label */
     let nodeIds = new Map<Node, number>();
@@ -690,6 +587,19 @@ export function checkUndefined(defVarsMap: Map<Node, DefinedVars>)
 
     return { ok: true };
 }
+
+/* analyze program and return it to user */
+export function analyzeProg(prog: Prog): Analysis {
+    let graph = genGraph(prog.cmd);
+    return {
+        in:           prog.in,
+        out:          prog.out,
+        graph,
+        definedVars:  analyzeDefinedVars(graph, prog.in),
+        liveVars:     analyzeLiveVars(graph, prog.out),
+        reachingDefs: analyzeReaching(graph, prog.in),
+    };
+};
 
 /* default function to fully check a program before sending it to exec stage */
 export default function assertProg(prog: Prog): void | never {

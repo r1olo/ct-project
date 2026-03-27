@@ -3,7 +3,8 @@
 *   by Andrea Riolo Vinciguerra
 */
 
-import { Cmd, stringifyNum, stringifyBool } from "./engine";
+import { BoolExpr, Cmd, Identifier, NumExpr,
+         stringifyNum, stringifyBool } from "./engine";
 import { RuntimeError } from "../errors";
 
 /* narrow down AST types for specific nodes */
@@ -32,7 +33,7 @@ type SimpleNode = Extract<Node, { next?: Node }>;
 
 /* an exit node is a non-branching node (a SimpleNode) whose next property
  * is strictly undefined. an exit node CANNOT have children */
-type ExitNode = { next?: undefined } & SimpleNode;
+export type ExitNode = { next?: undefined } & SimpleNode;
 
 /* a graph (or subgraph, inductively) has two "invariant" nodes: an entry
  * one and an exit one */
@@ -62,6 +63,144 @@ export type BlockGraph = {
     entry: Block,
     exit:  ExitBlock,
 };
+
+/* Identifier NumExpr. this encapsulates an identifier AST node. used for
+ * in the diagnostic system when showing the erroneous variable */
+export type IdentifierExpr = { type: "id" } & NumExpr;
+
+/* extract all used variables from a NumExpr. needed for calculation of gen and
+ * kill functions for analyses */
+export function extractUsedVarsNumExpr(expr: NumExpr): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (expr.type) {
+        case "id":
+            /* add this own expression */
+            vars.add(expr);
+            break;
+        case "add":
+        case "sub":
+        case "mul":
+            addToVars(extractUsedVarsNumExpr(expr.a));
+            addToVars(extractUsedVarsNumExpr(expr.b));
+            break;
+    }
+    return vars;
+}
+
+/* extract all used variables from a BoolExpr. needed for calculation of gen and
+ * kill functions for analyses */
+export function extractUsedVarsBoolExpr(expr: BoolExpr): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (expr.type) {
+        case "and":
+            addToVars(extractUsedVarsBoolExpr(expr.a));
+            addToVars(extractUsedVarsBoolExpr(expr.b));
+            break;
+        case "not":
+            addToVars(extractUsedVarsBoolExpr(expr.e));
+            break;
+        case "lt":
+            addToVars(extractUsedVarsNumExpr(expr.a));
+            addToVars(extractUsedVarsNumExpr(expr.b));
+            break;
+    }
+    return vars;
+}
+
+/* extract all used variables from a Cmd. needed for calculation of gen and
+ * kill functions for analyses */
+export function extractUsedVarsCmd(cmd: Cmd): Set<IdentifierExpr> {
+    let vars = new Set<IdentifierExpr>();
+    const addToVars = (set: Set<IdentifierExpr>) => {
+        set.forEach(v => vars.add(v));
+    }
+    switch (cmd.type) {
+        case "assign":
+            /* we skip cmd.i, which is the assigned variable!!!. extract
+             * variables used in the numeric expression */
+            addToVars(extractUsedVarsNumExpr(cmd.e));
+            break;
+        case "if":
+        case "while":
+            /* extract variables used in the boolean condition */
+            addToVars(extractUsedVarsBoolExpr(cmd.cond));
+            break;
+        case "seq":
+        case "skip":
+            /* seq's and skip's have no variables (they are commands) */
+            break;
+    }
+    return vars;
+}
+
+/* wrapper around the helper above that returns only strings instead of
+ * whole AST nodes */
+export function extractUsedVarsCmdId(cmd: Cmd): Set<Identifier> {
+    /* we only care about the string identifiers */
+    return new Set([...extractUsedVarsCmd(cmd)].map(e => e.i));
+}
+
+/* this helper will scan the graph and build utility maps that can be
+ * used in analyses. for example, among the others, a map of the predecessors
+ * for every node. this also works as a sort of snapshot for the graph */
+export function buildGraphMaps(graph: Graph): { preds: Map<Node, Set<Node>>,
+                                                succs: Map<Node, Set<Node>>,
+                                                allNodes: Set<Node> } {
+    /* these are the maps */
+    let preds = new Map<Node, Set<Node>>();
+    let succs = new Map<Node, Set<Node>>();
+    let visited = new Set<Node>();
+
+    /* little dfs to traverse the whole graph */
+    function traverse(node: Node) {
+        /* prevent cyclical traverse */
+        if (visited.has(node))
+            return;
+        visited.add(node);
+
+        /* quick lambda to add an edge between two nodes. this affects the
+         * preds set of the next node (to) and the succs set of ourselves
+         * (from) */
+        const addEdge = (from: Node, to: Node) => {
+            /* init sets first */
+            if (!succs.has(from))
+                succs.set(from, new Set());
+            if (!preds.has(to))
+                preds.set(to, new Set());
+
+            /* link the two nodes */
+            succs.get(from)!.add(to);
+            preds.get(to)!.add(from);
+        }
+
+        /* if it's a conditional, we have 2 possible branches */
+        if (node.type === "cond") {
+            /* add the edges to its 2 branches */
+            addEdge(node, node.true);
+            addEdge(node, node.false);
+
+            /* keep traversing down */
+            traverse(node.true);
+            traverse(node.false);
+        } else if (node.next) {
+            /* add the edge to its only branch */
+            addEdge(node, node.next);
+
+            /* keep traversing down */
+            traverse(node.next);
+        }
+    }
+
+    /* traverse the entry and return the structures */
+    traverse(graph.entry);
+    return { preds, succs, allNodes: visited };
+}
 
 /* the configuration for a graphToDOT function */
 export type DOTArgs<T> = {
@@ -211,7 +350,7 @@ export function graphToDOT<T>(args: DOTArgs<T>): string {
 /* export a minimal graph to a DOT format string for visualization.
  * bypassing "skip" is optional here, because we may not care about
  * visualizing skip nodes */
-export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
+export function exportGraph(graph: Graph, showSkip: boolean = true): string {
     return graphToDOT({
         entry: graph.entry,
         labelShape: node => {
@@ -244,7 +383,7 @@ export function exportToDOT(graph: Graph, showSkip: boolean = true): string {
 
 /* export a maximal graph for visualization. the only skips present here
  * are the ones inserted by the programmer. we can hide those as well */
-export function exportBlockToDOT(graph: BlockGraph,
+export function exportBlockGraph(graph: BlockGraph,
                                  showSkip: boolean = true): string {
     return graphToDOT({
         entry: graph.entry,
