@@ -1,8 +1,9 @@
 def main with input x output x as
 x := x + 50 + 25 * (10 * (x + 0 + (25 * 1 + 5) * 1) * 1 + 0 + (2 - 2) - 0) * 1;
 temp := x + 0 + (500 * x + 0 * 1) * 1 + 0 * (x * 1 + 5);
-x := x + temp - temp;
-y := x + 0 + 500;
+c := 600;
+x := x + temp - temp + c;
+y := x + 0 + 500 * c;
 x := y * 1;
 
 if true and (x < 20) then (

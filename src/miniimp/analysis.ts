@@ -373,8 +373,23 @@ export function analyzeReaching(graph: Graph,
             /* return the initialization node */
             if (node === graph.entry) {
                 /* we need to inject a fake node to represent the definition
-                 * for the input variable (note: smart but risky!!) */
-                let fakeInput: DefNode = { type: "assign" } as DefNode;
+                 * for the input variable (note: smart but risky!! crashes
+                 * so far: 2) */
+                let fakeInput: DefNode = {
+                    type: "assign",
+                    ast: {
+                        type: "assign",
+                        i: input,
+                        e: {
+                            type: "id",
+                            i: "INPUT",
+                            span: { start: { line: 0, col: 0 },
+                                    end: { line: 0, col: 0 } }
+                        },
+                        span: { start: { line: 0, col: 0 },
+                                end: { line: 0, col: 0 } }
+                    }
+                };
                 if (!defsByVar.has(input))
                     defsByVar.set(input, new Set());
                 defsByVar.get(input)!.add(fakeInput);

@@ -133,10 +133,7 @@ function performArithmMerge(op: "add" | "sub" | "mul",
     }
 
     /* the graph has changed because we merged two expressions arithmetically */
-    return {
-        changed: true,
-        expr: newExpr,
-    };
+    return { changed: true, expr: newExpr };
 }
 
 /* return a plain node merge */
@@ -156,58 +153,30 @@ function mergeExpr(origExpr: { type: "add" | "sub" | "mul" } & NumExpr,
         case "add": {
             /* for addition, either of them can be 0. we can just strip it
              * off */
-            if (lVal === 0) {
-                return {
-                    changed: true,
-                    expr: rightExpr
-                };
-            }
-            if (rVal === 0) {
-                return {
-                    changed: true,
-                    expr: leftExpr
-                };
-            }
+            if (lVal === 0)
+                return { changed: true, expr: rightExpr };
+            if (rVal === 0)
+                return { changed: true, expr: leftExpr };
             break;
         }
         case "sub": {
             /* for subtraction, we can only remove the right 0, since we don't
              * have a negate operation */
-            if (rVal === 0) {
-                return {
-                    changed: true,
-                    expr: leftExpr
-                };
-            }
+            if (rVal === 0)
+                return { changed: true, expr: leftExpr };
             break;
         }
         case "mul": {
             /* for multiplication, 1 can be stripped off while the 0 turns
              * everything into a 0 (returning the node itself) */
-            if (lVal === 1) {
-                return {
-                    changed: true,
-                    expr: rightExpr
-                };
-            }
-            if (rVal === 1) {
-                return {
-                    changed: true,
-                    expr: leftExpr
-                };
-            }
-            if (lVal === 0) {
-                return {
-                    changed: true,
-                    expr: leftExpr
-                };
-            }
-            if (rVal === 0) {
-                return {
-                    changed: true,
-                    expr: rightExpr
-                };
-            }
+            if (lVal === 1)
+                return { changed: true, expr: rightExpr };
+            if (rVal === 1)
+                return { changed: true, expr: leftExpr };
+            if (lVal === 0)
+                return { changed: true, expr: leftExpr };
+            if (rVal === 0)
+                return { changed: true, expr: rightExpr };
             break;
         }
     }
@@ -216,53 +185,39 @@ function mergeExpr(origExpr: { type: "add" | "sub" | "mul" } & NumExpr,
      * have 10 + (20 + x), we must turn it into (10 + 20) + x and
      * automatically fold into 30 + x. this is also valid for subtraction and
      * multiplication */
-    if (origExpr.type === "mul") {
-        if (lVal !== undefined && rightExpr.type === "mul") {
-            let rightLeft = rightExpr.a;
-            if (rightLeft.type === "val") {
-                let newConst = lVal * rightLeft.v;
-                return {
-                    changed: true,
-                    expr: {
-                        type: "mul",
-                        a: {
-                            type: "val",
-                            v: newConst,
-                            span: leftExpr.span
-                        },
-                        b: rightExpr.b,
-                        span: {
-                            start: leftExpr.span.start,
-                            end: rightExpr.span.end
-                        }
-                    }
-                };
+    if ((origExpr.type === "add" || origExpr.type === "sub" ||
+            origExpr.type === "mul") && lVal !== undefined &&
+            rightExpr.type === origExpr.type) {
+        let rightLeft = rightExpr.a;
+        if (rightLeft.type === "val") {
+            let newConst: number;
+            switch (origExpr.type) {
+                case "add":
+                    newConst = lVal + rightLeft.v;
+                    break;
+                case "sub":
+                    newConst = lVal - rightLeft.v;
+                    break;
+                case "mul":
+                    newConst = lVal * rightLeft.v;
+                    break;
             }
-        }
-    } else if (origExpr.type === "add" || origExpr.type === "sub") {
-        if (lVal !== undefined && (rightExpr.type === "add" ||
-                                   rightExpr.type === "sub")) {
-            let rightLeft = rightExpr.a;
-            if (rightLeft.type === "val") {
-                let newConst = origExpr.type === "add" ? lVal + rightLeft.v :
-                                                         lVal - rightLeft.v;
-                return {
-                    changed: true,
-                    expr: {
-                        type: origExpr.type,
-                        a: {
-                            type: "val",
-                            v: newConst,
-                            span: leftExpr.span
-                        },
-                        b: rightExpr.b,
-                        span: {
-                            start: leftExpr.span.start,
-                            end: rightExpr.span.end
-                        }
+            return {
+                changed: true,
+                expr: {
+                    type: origExpr.type,
+                    a: {
+                        type: "val",
+                        v: newConst,
+                        span: leftExpr.span
+                    },
+                    b: rightExpr.b,
+                    span: {
+                        start: leftExpr.span.start,
+                        end: rightExpr.span.end
                     }
-                };
-            }
+                }
+            };
         }
     }
 
@@ -273,12 +228,8 @@ function mergeExpr(origExpr: { type: "add" | "sub" | "mul" } & NumExpr,
     /* if nothing was changed, don't spawn a new node but keep the original
      * AST nodes. this doesn't invalidate analysis maps and truly gives
      * meaning to "changed = false" */
-    if (!leftMerge.changed && !rightMerge.changed) {
-        return {
-            changed: false,
-            expr: origExpr
-        };
-    }
+    if (!leftMerge.changed && !rightMerge.changed)
+        return { changed: false, expr: origExpr };
 
     /* the returned expression is the merge of the folded subexpressions.
      * a change was registered in either side (or both) */
@@ -293,10 +244,7 @@ function mergeExpr(origExpr: { type: "add" | "sub" | "mul" } & NumExpr,
     };
 
     /* carry the changed over from the subexpressions */
-    return {
-        changed: true,
-        expr: newExpr,
-    };
+    return { changed: true, expr: newExpr };
 }
 
 /* this helper will fold a numeric expression, leaving variables as they are */
@@ -412,12 +360,8 @@ function foldBoolExpr(expr: BoolExpr): BoolMergeResult {
             }
 
             /* pass through expression if nothing changed */
-            if (!subMerge.changed) {
-                return {
-                    changed: false,
-                    expr
-                };
-            }
+            if (!subMerge.changed)
+                return { changed: false, expr };
 
             /* passthrough changed subexprs */
             return {
@@ -454,12 +398,8 @@ function foldBoolExpr(expr: BoolExpr): BoolMergeResult {
             }
 
             /* carry on the original exprs */
-            if (!leftMerge.changed && !rightMerge.changed) {
-                return {
-                    changed: false,
-                    expr
-                };
-            }
+            if (!leftMerge.changed && !rightMerge.changed)
+                return { changed: false, expr };
 
             /* or propagate the changes */
             return {
@@ -504,6 +444,212 @@ function constFold(analy: Analysis): boolean {
     return changed;
 }
 
+/* this helper will traverse a numeric expression and replace any identifier
+ * with its direct values, if the reaching definition assigning it is singular
+ * and assigns a raw value */
+function propagateNumExpr(expr: NumExpr, reachIn: Set<Node>): NumMergeResult {
+    switch (expr.type) {
+        case "val":
+            /* values pass through */
+            return {
+                changed: false,
+                expr
+            };
+        case "id": {
+            /* find all reaching definitions for this variable (nodes whose
+             * assignment is for this expr.i) */
+            let defsForVar = [...reachIn].filter(n =>
+                n.type === "assign" && n.ast.i === expr.i
+            );
+
+            /* only propagate if exactly one definition reaches this point */
+            if (defsForVar.length === 1) {
+                let defNode: Node = defsForVar[0]!;
+
+                /* only propagate if definition assigns a raw value */
+                if (defNode.type === "assign" && defNode.ast.e.type === "val") {
+                    return {
+                        changed: true,
+                        expr: {
+                            type: "val",
+                            v: defNode.ast.e.v,
+                            span: expr.span
+                        }
+                    };
+                }
+
+                // /* this is impossible due to our previous filtering, but we
+                //  * need to shut the TS compiler up for good */
+                // if (defNode.type !== "assign") {
+                //     throw new RuntimeError("definition node is not assign");
+                // }
+
+                // /* propagate the inner definition */
+                // return {
+                //     changed: true,
+                //     expr: defNode.ast.e
+                // }
+            }
+
+            /* if it has multiple definitions or it's not a constant, pass
+             * it through */
+            return { changed: false, expr };
+        }
+        case "add":
+        case "sub":
+        case "mul": {
+            /* get the sub propagations */
+            let leftMerge = propagateNumExpr(expr.a, reachIn);
+            let rightMerge = propagateNumExpr(expr.b, reachIn);
+
+            /* if nothing changed, passthrough expr as is */
+            if (!leftMerge.changed && !rightMerge.changed)
+                return { changed: false, expr };
+
+            /* return the merged node */
+            return {
+                changed: true,
+                expr: {
+                    type: expr.type,
+                    a: leftMerge.expr,
+                    b: rightMerge.expr,
+                    span: {
+                        start: leftMerge.expr.span.start,
+                        end: rightMerge.expr.span.end
+                    }
+                }
+            };
+        }
+    }
+}
+
+function propagateBoolExpr(expr: BoolExpr, reachIn: Set<Node>): BoolMergeResult {
+    switch (expr.type) {
+        case "val":
+            /* values pass through */
+            return { changed: false, expr };
+        case "and": {
+            /* get sub merges */
+            let leftMerge = propagateBoolExpr(expr.a, reachIn);
+            let rightMerge = propagateBoolExpr(expr.b, reachIn);
+
+            /* unchanged -> return node itself */
+            if (!leftMerge.changed && !rightMerge.changed)
+                return { changed: false, expr };
+
+            /* changed -> return merge */
+            return {
+                changed: true,
+                expr: {
+                    type: "and",
+                    a: leftMerge.expr,
+                    b: rightMerge.expr,
+                    span: {
+                        start: leftMerge.expr.span.start,
+                        end: rightMerge.expr.span.end
+                    }
+                }
+            };
+        }
+        case "not": {
+            /* get sub expr */
+            let subMerge = propagateBoolExpr(expr.e, reachIn);
+
+            /* unchanged -> return node itself */
+            if (!subMerge.changed)
+                return { changed: false, expr };
+
+            /* changed -> return merge */
+            return {
+                changed: true,
+                expr: {
+                    type: "not",
+                    e: subMerge.expr,
+                    span: {
+                        start: expr.span.start,
+                        end: subMerge.expr.span.end
+                    }
+                }
+            };
+        }
+        case "lt": {
+            /* get numeric sub merges */
+            let leftMerge = propagateNumExpr(expr.a, reachIn);
+            let rightMerge = propagateNumExpr(expr.b, reachIn);
+
+            /* unchanged -> return node itself */
+            if (!leftMerge.changed && !rightMerge.changed)
+                return { changed: false, expr };
+
+            /* changed -> return merge */
+            return {
+                changed: true,
+                expr: {
+                    type: "lt",
+                    a: leftMerge.expr,
+                    b: rightMerge.expr,
+                    span: {
+                        start: leftMerge.expr.span.start,
+                        end: rightMerge.expr.span.end
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* constant propagation. this propgates a constant from above. a single pass
+ * does everything it can to the current graph (only ast nodes are changed).
+ * since variable usage changes, recreating the graph maps is required after
+ * a pass of this optimization */
+function constProp(analy: Analysis): boolean {
+    /* collect current graph snapshot */
+    let { allNodes } = buildGraphMaps(analy.graph);
+
+    /* iterate over all nodes */
+    let changed = false;
+    for (const node of allNodes) {
+        /* ignore non-assign and non-cond nodes */
+        if (node.type !== "assign" && node.type !== "cond")
+            continue;
+
+        /* get in reaching definitions */
+        let reachIn = analy.reachingDefs.get(node)!.in;
+
+        /* try to propagate constant for this expression */
+        switch (node.type) {
+            case "assign": {
+                let merge = propagateNumExpr(node.ast.e, reachIn);
+                node.ast.e = merge.expr;
+                changed ||= merge.changed;
+                break;
+            }
+            case "cond": {
+                let merge = propagateBoolExpr(node.ast.cond, reachIn);
+                node.ast.cond = merge.expr;
+                changed ||= merge.changed;
+                break;
+            }
+        }
+    }
+
+    return changed;
+}
+
+export function doConstProp(analy: Analysis): boolean {
+    /* we'll return whether optimization actually changed somehing */
+    let changed = false;
+
+    while (constProp(analy)) {
+        changed = true;
+        analy.definedVars = analyzeDefinedVars(analy.graph, analy.in);
+        analy.liveVars = analyzeLiveVars(analy.graph, analy.out);
+        analy.reachingDefs = analyzeReaching(analy.graph, analy.in);
+    }
+
+    return changed;
+}
+
 export function doConstFold(analy: Analysis): boolean {
     /* just perform a single pass */
     return constFold(analy);
@@ -534,7 +680,8 @@ export default function optimize(analy: Analysis): boolean {
         /* changed = step1() || step2() || step3() || ... */
         let changedDSE = doDSE(analy);
         let changedCF = doConstFold(analy);
-        changed = changedDSE || changedCF;
+        let changedCP = doConstProp(analy);
+        changed = changedDSE || changedCF || changedCP;
     } while (changed);
 
     return changed;
