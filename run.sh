@@ -4,16 +4,21 @@
 #   quickly run either compiler, or compile them first
 #
 
+print() {
+    # always print to stderr
+    echo "$@" >&2
+}
+
 # make sure package.json exists (cwd is correct)
 if [ ! -f "package.json" ]; then
-    echo "Error: package.json not found. Ensure you are running this" \
-        "script in the root directory." >&2
+    print "Error: package.json not found. Ensure you are running this" \
+          "script in the root directory."
     exit 1
 fi
 
 # ensure npm is installed
 if ! command -v npm >/dev/null 2>&1; then
-    echo "Error: npm is not installed or not available in the system PATH." >&2
+    print "Error: npm is not installed or not available in the system PATH."
     exit 1
 fi
 
@@ -27,23 +32,23 @@ ensure_and_run() {
     
     # check if the executable exists
     if [ ! -f "$executable" ]; then
-        echo "Executable '$executable' not found. Attempting to build..."
+        print "Executable '$executable' not found. Attempting to build..."
         
         # try to compile
-        if ! npm run "$build_cmd"; then
-            echo "Build failed. Assuming missing dependencies. Running" \
-                "'npm ci'..."
+        if ! npm run "$build_cmd" >/dev/null 2>&1; then
+            print "Build failed. Assuming missing dependencies. Running" \
+                  "'npm ci'..."
             
             # install dependencies and retry
-            if ! npm ci; then
-                echo "Error: 'npm ci' failed to install dependencies." >&2
+            if ! npm ci >/dev/null 2>&1; then
+                print "Error: 'npm ci' failed to install dependencies."
                 exit 1
             fi
             
-            echo "Dependencies installed. Retrying build..."
-            if ! npm run "$build_cmd"; then
-                echo "Error: Build failed again after installing" \
-                    "dependencies. Bailing out." >&2
+            print "Dependencies installed. Retrying build..."
+            if ! npm run "$build_cmd" >/dev/null 2>&1; then
+                print "Error: Build failed again after installing" \
+                      "dependencies. Bailing out."
                 exit 1
             fi
         fi
@@ -56,7 +61,7 @@ ensure_and_run() {
 
 # validate that at least one argument (the target) is provided
 if [ "$#" -lt 1 ]; then
-    echo "usage: $0 {miniimp|minifun|clean} [args]" >&2
+    print "usage: $0 {miniimp|minifun|clean} [args]"
     exit 1
 fi
 
@@ -70,11 +75,11 @@ case "$main_target" in
         ensure_and_run "$main_target" "$@"
         ;;
     clean)
-        npm run clean
+        npm run clean >/dev/null 2>&1
         ;;
     *)
-        echo "Error: Unknown target '$main_target'. Valid options are" \
-            "'miniimp' or 'minifun'." >&2
+        print "Error: Unknown target '$main_target'. Valid options are" \
+              "'miniimp' or 'minifun'."
         exit 1
         ;;
 esac
