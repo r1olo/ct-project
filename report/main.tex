@@ -1,9 +1,13 @@
 \documentclass[12pt]{article}
+\usepackage{amsmath}
 \usepackage{parskip}
+\usepackage{xurl}
 
 \author{Andrea Riolo Vinciguerra}
 \title{Compilation Techniques: Laboratory Project\\ Project Report}
 \date{\today}
+
+\newcommand{\Code}[1]{\texttt{#1}}
 
 \begin{document}
 
@@ -14,10 +18,11 @@
 \section{Introduction}
 
 This project is organized in a single codebase that houses two compilers:
-MiniImp and MiniFun. While both share common background code, the core logic is
-kept strictly separate from the main user features. This setup allows users to
-easily choose between generating a control flow graph, running an interactive
-interpreter, or executing a code file.
+MiniImp and MiniFun. Both share common background code (like the diagnostics
+system) and the core logic is kept strictly separate from the main user
+interface (via command line). This setup allows users to easily choose between
+generating a control flow graph, running an interactive interpreter, or
+executing a code file.
 
 A main focus of the design is modularity. By keeping the code well-organized and
 adaptable, the system is much easier to maintain and expand over time. Comments
@@ -27,23 +32,21 @@ comprehension easier.
 The code is organized by separating distinct functional blocks into different
 files. For example, the core evaluator (or interpreter) and the Abstract Syntax
 Tree definitions for both compilers are stored in a file called
-\texttt{engine.ts}. The rest of the functionality builds upon this file. For
+\path{engine.ts}. The rest of the functionality builds upon this file. For
 example, MiniImp extends this core engine to construct its control flow graph
 and handle optimizations, while MiniFun supports a complete polymorphic type
 system.
 
 I chose TypeScript as the programming language for two main reasons. First, I
-wanted the opportunity to master a language I was less familiar with. Second,
+wanted the opportunity to master a language I was less familiar with. Secondly,
 TypeScript is excellent at handling union types. This feature (used extensively
 throughout the program) makes writing compiler code much simpler by avoiding the
 bulky, complex structures often needed in languages like C++ or Rust.
 
-Because Node.js works smoothly across different operating systems, the project
-can be packaged into a single, easy-to-run executable file for both macOS and
-Linux. On Windows, however, the operating system does not support shebangs (the
-special line of code that automatically tells the system how to run a script).
-As a result, Windows users need to run the program manually by invoking the
-\texttt{node} command.
+Because Node.js works across different operating systems, the project can be
+packaged into a single executable for Linux, macOS and Windows. On the latter,
+however, the user must run the program manually by invoking the \texttt{node}
+command.
 
 \section{Running the code}
 
@@ -57,7 +60,7 @@ installed and properly configured in the system's \texttt{PATH}.
 \subsection{Automatic run}
 
 Inside the main project folder, there is a helpful script called
-\texttt{run.sh}. This script handles the setup automatically by downloading the
+\path{run.sh}. This script handles the setup automatically by downloading the
 required files, building the chosen compiler (MiniImp or MiniFun), and launching
 the program.
 
@@ -91,11 +94,84 @@ For Windows, the last step involves invoking \texttt{node} explicitly, like so:
 $ node dist/miniimp --help  # or node dist/minifun --help
 \end{verbatim}
 
-\section{MiniFun: Functional Language}
+\section{MiniFun: functional language}
 
 MiniFun is a functional language supporting three types of first-class values:
-closures (functions that store the environment at the time of definition),
-integers and booleans. It supports let bindings and recursion.
+functions, integers and booleans. It supports let bindings and recursion.
+
+\subsection{Abstract Syntax Tree \& evaluation}
+
+The type definitions for the Abstract Syntax Tree can be found in
+\path{src/minifun/engine.ts}. In this file, the type \Code{Value} represents
+the final result of an evaluation. There are three possible values:
+\Code{number}, \Code{boolean} and \Code{Closure}. The first two rely
+on TypeScript's built-in types, while the last one is a custom structure. A
+basic expression is represented through the type \Code{Expr}, which is a
+discriminated union of all the available operators.
+
+A closure is a special function that ``remembers'' its surrounding environment
+at the time of definition and uses it during execution. Because of this, its
+type definition must include both the function's body and the saved environment.
+
+As seen in the grammar of the language, some expressions like \Code{let} or
+\Code{fun} can accept type labels to override automatic type inference. I
+made these labels optional, giving users the choice to either specify types
+manually or rely on (and trust) the compiler's type system.
+
+The interpreter processes the Abstract Syntax Tree generated by the parser. It
+traverses the tree recursively, evaluating sub-nodes, updating the environment
+and returning the final value. This is what the \Code{evalExpr} function
+does.
+
+\subsubsection{Environment}
+
+Unlike imperative languages, purely functional languages do not allow side
+effects. Instead of modifying global memory, an evaluated expression returns an
+updated environment. As the interpreter reaches the end of the three and climbs
+back up the recursive chain, these temporary inner environments are discarded
+until the original (empty) one is reached.
+
+To manage this, I used an \Code{Environment} interface with two main functions:
+one to look up the value of a specific variable, and another to create a fresh
+copy of the same environment with a newly assigned identifier. This interface is
+implemented trivially using a linked list, but is left purposefully generic to
+allow for more solutions.
+
+\subsubsection{Inference rules}
+
+The evaluation inference rules are implemented exactly as they are shown in the
+slides, with the exception of recursive function calls (declared with
+\texttt{letfun}).
+
+Instead of using a special rule to apply recursive functions, which injects the
+function's name into the environment before evaluating its body, I modified the
+closure's saved environment to point directly back to the closure object itself.
+This circular reference allows the recursive function to be called just like any
+other function, since it is already available within its own stored environment.
+
+The new LetFun rule, therefore, becomes as follows:
+$$
+\text{LetFun}\quad
+\frac
+{ \rho' = \rho[f \mapsto (f, x, t_1, \rho')] \vdash t_2 \longrightarrow t }
+{ \rho \vdash \texttt{letfun} \; f \; x \; = \; t_1 \; \texttt{in} \; t_2
+\longrightarrow t }
+$$
+
+%$$
+%\text{FunApp}\quad
+%\frac
+%{ \rho \vdash t_1 \longrightarrow (x, t_1', \rho') \quad \rho \vdash t_2
+%\longrightarrow t_2' \quad \rho'[x \mapsto t_2'] \vdash t_1' \longrightarrow t }
+%{ \rho \vdash t_1t_2 \longrightarrow t}
+%$$
+
+\subsection{Type system}
+
+%TODO
+The type definitions and implementation for MiniFun's type system are located in
+\path{src/minifun/validator.ts}. I have implemented the complete polymorphic
+type system in the slides, which is based on the Hindley-Milner algorithm.
 
 %block graph has 'merge' block to handle the case where, after an if, there's
 %the end of the program. without 'merge' block, we would have an empty linear

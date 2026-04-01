@@ -2,3 +2,10 @@ dist/
 build/
 node_modules/
 test.ts
+
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.toc
+*.pdf
