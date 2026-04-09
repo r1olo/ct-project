@@ -94,7 +94,27 @@ For Windows, the last step involves invoking \texttt{node} explicitly, like so:
 $ node dist/miniimp --help  # or node dist/minifun --help
 \end{verbatim}
 
-\section{MiniFun: functional language}
+\section{Diagnostics system}
+
+Both compilers share the same diagnostics system, ensuring consistent and
+precise error reporting for the user. The interpreters intentionally bypass this
+system, as runtime evaluation errors represent a failure in code validation
+rather than a user error.
+
+To provide accurate diagnostics, I have made Abstract Syntax Tree nodes track
+their exact location in the source file using a \Code{SourceSpan}. This
+structure records the starting and ending lines and columns without needing to
+store a copy of the code. When a \Code{DiagnosticError} is thrown, the caller
+invokes its \Code{format} function and passes in the full source code. Using the
+\Code{SourceSpan}, this function derives a detailed, colored error message that
+highlights the exact problem area, along with a clear explanation and any
+helpful additional notes.
+
+%TODO: anyone else?
+The implementation is located in the file \path{src/diag.ts} and the
+functionality is used by all the code validators and parsers.
+
+\section{MiniFun: the functional language}
 
 MiniFun is a functional language supporting three types of first-class values:
 functions, integers and booleans. It supports let bindings and recursion.
@@ -114,7 +134,7 @@ at the time of definition and uses it during execution. Because of this, its
 type definition must include both the function's body and the saved environment.
 
 As seen in the grammar of the language, some expressions like \Code{let} or
-\Code{fun} can accept type labels to override automatic type inference. I
+\Code{fun} can accept type labels to override automatic type inference. I have
 made these labels optional, giving users the choice to either specify types
 manually or rely on (and trust) the compiler's type system.
 
@@ -127,7 +147,7 @@ does.
 
 Unlike imperative languages, purely functional languages do not allow side
 effects. Instead of modifying global memory, an evaluated expression returns an
-updated environment. As the interpreter reaches the end of the three and climbs
+updated environment. As the interpreter reaches the end of the tree and climbs
 back up the recursive chain, these temporary inner environments are discarded
 until the original (empty) one is reached.
 
@@ -149,7 +169,7 @@ closure's saved environment to point directly back to the closure object itself.
 This circular reference allows the recursive function to be called just like any
 other function, since it is already available within its own stored environment.
 
-The new LetFun rule, therefore, becomes as follows:
+The new closure definition rule, therefore, becomes as follows:
 $$
 \text{LetFun}\quad
 \frac
@@ -157,6 +177,8 @@ $$
 { \rho \vdash \texttt{letfun} \; f \; x \; = \; t_1 \; \texttt{in} \; t_2
 \longrightarrow t }
 $$
+Notice how the function's identifier no longer points to the original
+environment $\rho$, but rather to the modified environment, called $\rho'$.
 
 %$$
 %\text{FunApp}\quad
@@ -171,7 +193,17 @@ $$
 %TODO
 The type definitions and implementation for MiniFun's type system are located in
 \path{src/minifun/validator.ts}. I have implemented the complete polymorphic
-type system in the slides, which is based on the Hindley-Milner algorithm.
+type system in the slides, which is based on the Hindley-Milner algorithm. The
+whole system revolves around the concept of \textit{monotypes} and
+\textit{polytypes}, each defined in its own structure.
+
+A monotype either represents a simple concrete type, like integer or boolean, or
+a generic, undefined type. In such case, the type is represented by a variable.
+If no extra context is provided, the type stands for itself. An example would be
+the identity function (\Code{fun x => x}), which has type \Code{a -> a}.
+
+A polytype, on the other hand, represents a monotype whose generic types may be
+bound waiting to be assigned a more specific type.
 
 %block graph has 'merge' block to handle the case where, after an if, there's
 %the end of the program. without 'merge' block, we would have an empty linear
