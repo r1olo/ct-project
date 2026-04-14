@@ -1,8 +1,6 @@
 #!/bin/sh
 
-#
 #   quickly run either compiler, or compile them first
-#
 
 print() {
     # always print to stderr
@@ -11,14 +9,14 @@ print() {
 
 # make sure package.json exists (cwd is correct)
 if [ ! -f "package.json" ]; then
-    print "Error: package.json not found. Ensure you are running this" \
-          "script in the root directory."
+    print "error: package.json not found. ensure you are running this" \
+          "script in the root directory"
     exit 1
 fi
 
 # ensure npm is installed
 if ! command -v npm >/dev/null 2>&1; then
-    print "Error: npm is not installed or not available in the system PATH."
+    print "error: npm is not installed or not available in the system PATH"
     exit 1
 fi
 
@@ -32,23 +30,23 @@ ensure_and_run() {
     
     # check if the executable exists
     if [ ! -f "$executable" ]; then
-        print "Executable '$executable' not found. Attempting to build..."
+        print "executable '$executable' not found. attempting to build..."
         
         # try to compile
         if ! npm run "$build_cmd" >/dev/null 2>&1; then
-            print "Build failed. Assuming missing dependencies. Running" \
+            print "build failed. assuming missing dependencies. running" \
                   "'npm ci'..."
             
             # install dependencies and retry
             if ! npm ci >/dev/null 2>&1; then
-                print "Error: 'npm ci' failed to install dependencies."
+                print "error: 'npm ci' failed to install dependencies"
                 exit 1
             fi
             
-            print "Dependencies installed. Retrying build..."
+            print "dependencies installed. retrying build..."
             if ! npm run "$build_cmd" >/dev/null 2>&1; then
-                print "Error: Build failed again after installing" \
-                      "dependencies. Bailing out."
+                print "error: build failed again after installing" \
+                      "dependencies. bailing out"
                 exit 1
             fi
         fi
@@ -78,8 +76,8 @@ case "$main_target" in
         npm run clean >/dev/null 2>&1
         ;;
     *)
-        print "Error: Unknown target '$main_target'. Valid options are" \
-              "'miniimp' or 'minifun'."
+        print "error: unknown target '$main_target'. valid options are" \
+              "'miniimp' or 'minifun'"
         exit 1
         ;;
 esac

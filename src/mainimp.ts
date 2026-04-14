@@ -7,12 +7,12 @@ import parse from "./miniimp/parser";
 import { maximizeGraph,
          exportGraph,
          exportBlockGraph } from "./miniimp/graph";
-import assertProg,
-     { analyzeProg,
-       exportDefinedVars,
+import validateProg,
+     { exportDefinedVars,
        exportLiveVars,
        exportReachingDefs } from "./miniimp/analysis";
 import optimize from "./miniimp/opt";
+import codegen from "./miniimp/codegen";
 
 /* create a parser */
 const parser = new ArgumentParser({
@@ -32,6 +32,10 @@ const actionGroup = parser.add_mutually_exclusive_group({
 actionGroup.add_argument("-g", "--graph", {
     action: "store_true",
     help: "generate a graph",
+});
+actionGroup.add_argument("-c", "--compile", {
+    action: "store_true",
+    help: "compile the program (LLVM only for now TODO)",
 });
 actionGroup.add_argument("input_number", {
     nargs: "?",
@@ -96,11 +100,14 @@ if (!sourceCode.trim()) {
 }
 
 try {
+    /* parsing is somehow needed */
     const prog = parse(sourceCode);
-    
+
     if (args.graph) {
-        /* analyze the program and possibly optimize it */
-        let analy = analyzeProg(prog);
+        /* validate program and get a useful analysis object */
+        let analy = validateProg(prog);
+
+        /* possibly optimize the program analysis if need be */
         if (args.optimize)
             optimize(analy);
 
@@ -119,9 +126,12 @@ try {
 
         /* finally print this graph */
         console.log(dot);
+    } else if (args.compile) {
+        /* return our beautiful LLVM IR */
+        console.log(codegen(prog));
     } else {
-        /* validate and execute program */
-        assertProg(prog);
+        /* execute program (validate first) */
+        validateProg(prog);
         console.log("Result: " + execProg(prog, args.input_number));
     }
 } catch (err: any) {

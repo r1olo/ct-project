@@ -6,12 +6,12 @@
 import { Analysis,
          analyzeDefinedVars,
          analyzeLiveVars,
-         analyzeReaching } from "./analysis";
+         analyzeReaching,
+         buildGraphMaps } from "./analysis";
 import { RuntimeError } from "../errors";
 import { BoolExpr, NumExpr } from "./engine";
 import { ExitNode,
-         Node,
-         buildGraphMaps } from "./graph";
+         Node } from "./graph";
 
 /* dead store elimination single pass. this takes an analyzed graph and uses its
  * live variables map to delete superfluous assignments. this overwrites
@@ -477,18 +477,6 @@ function propagateNumExpr(expr: NumExpr, reachIn: Set<Node>): NumMergeResult {
                         }
                     };
                 }
-
-                // /* this is impossible due to our previous filtering, but we
-                //  * need to shut the TS compiler up for good */
-                // if (defNode.type !== "assign") {
-                //     throw new RuntimeError("definition node is not assign");
-                // }
-
-                // /* propagate the inner definition */
-                // return {
-                //     changed: true,
-                //     expr: defNode.ast.e
-                // }
             }
 
             /* if it has multiple definitions or it's not a constant, pass
@@ -674,6 +662,7 @@ export function doDSE(analy: Analysis): boolean {
 export default function optimize(analy: Analysis): boolean {
     /* we'll return whether optimization actually changed somehing */
     let changed = false;
+    let changedOnce = false;
 
     /* perform all steps as long as we get a change */
     do {
@@ -682,7 +671,11 @@ export default function optimize(analy: Analysis): boolean {
         let changedCF = doConstFold(analy);
         let changedCP = doConstProp(analy);
         changed = changedDSE || changedCF || changedCP;
+
+        /* changedOnce can become true and stay true */
+        changedOnce ||= changed;
     } while (changed);
 
-    return changed;
+    /* return whether this graph changed at least once */
+    return changedOnce;
 }
