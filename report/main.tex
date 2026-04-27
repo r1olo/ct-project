@@ -13,6 +13,7 @@
 \begin{document}
 
 \maketitle
+\clearpage
 \tableofcontents
 \clearpage
 
@@ -94,6 +95,9 @@ For Windows, the last step involves invoking \texttt{node} explicitly, like so:
 \begin{verbatim}
 $ node dist/miniimp --help  # or node dist/minifun --help
 \end{verbatim}
+
+From now on, the compiler program will be referenced as \texttt{./run.sh
+<compiler>} for consistency.
 
 \subsection{Generating MiniImp executables}
 
@@ -301,16 +305,16 @@ relevant (and unbound) type variables.
 
 \subsubsection{Algorithm W}
 
-The implementation of Algorithm W's inference rules follows the slides exactly.
-However, I extended these rules to support optional type annotations on
-\texttt{fun} and \texttt{letfun} statements. When a type label is omitted, the
-compiler relies on the standard inference rules. If a label is provided, the
-system enforces specific type restrictions during the inference process.
+The implementation of Algorithm W's inference rules follows the slides. However,
+I extended these rules to support optional type annotations on \texttt{fun} and
+\texttt{letfun} statements. When a type label is omitted, the compiler relies on
+the standard inference rules. If a label is provided, the system enforces
+specific type restrictions during the inference process.
 
 Type transformation functions are implemented exactly as per slides:
 \begin{itemize}
     \item \Code{unify()}: solves type constraints by finding a substitution that
-        makes two types identical. It may fail and yield a type error.
+        makes two types identical. It may fail and yield a diagnostic error.
     \item \Code{gener()}: converts a monotype into a polytype by binding free
         type variables that are not referenced in the current context.
     \item \Code{inst()}: replaces bound variables in a polytype with fresh type
@@ -449,9 +453,14 @@ fluency in TypeScript.
 \subsubsection{Exporting graphs}
 
 To assist with debugging and development, I created a generic graph-exporting
-helper called \Code{graphToDOT()}. Rather than hardcoding the export logic, this
-routine accepts a set of callback functions as arguments. Each function plays a
-specific role in defining the structure and appearance of the exported graph.
+helper called \Code{graphToDOT()}. This function generates a DOT-formatted
+string representing the control flow graph. The resulting output can be
+visualized using online DOT viewers or the standard \texttt{dot} command-line
+utility.
+
+Rather than hardcoding the export logic, this routine accepts a set of callback
+functions as arguments. Each function plays a specific role in defining the
+structure and appearance of the exported graph.
 
 These callback functions include:
 \begin{itemize}
@@ -471,6 +480,14 @@ Because of this modular design, \Code{graphToDOT()} can be easily adapted by
 creating specific wrappers for different graph types. This flexibility allows
 the compiler to export both minimal and maximal graphs, as well as seamlessly
 attach extra analysis metadata to each node.
+
+To quickly inspect basic graphs, the module provides two convenient wrappers:
+\Code{exportGraph()} and \Code{exportBlockGraph()}. A DOT graph can be generated
+for a specific program by executing the following commands:
+\begin{verbatim}
+$ ./run.sh miniimp -f code.mi -g     # minimal graph
+$ ./run.sh miniimp -f code.mi -g -m  # maximal graph
+\end{verbatim}
 
 \subsection{Graph analysis}
 
@@ -495,7 +512,22 @@ successors or predecessors, depending on the direction of the analysis) are
 added back to the work queue.
 
 The \Code{wqAnalyze()} generic wrapper reduced code duplication when
-implementing multiple distinct analyses.
+implementing multiple distinct analyses, and is driven by two primary callback
+functions provided as arguments:
+\begin{itemize}
+    \item \Code{init(node)}: establishes the initial state for a single node
+        before the main analysis begins. This function is executed once for
+        every node in the graph, relying on the surrounding scope to set up the
+        necessary data structures.
+    \item \Code{local(node, ctx, wq, map)}: defines the core update logic
+        applied to each node as it is processed from the work queue. It receives
+        the current node, a context object (\Code{ctx}) containing its immediate
+        neighbors, the current state of the analysis (\Code{map}), and a
+        reference to the work queue (\Code{wq}). Providing direct acces to the
+        queue allows the function to re-enqueue neighboring nodes, ensuring that
+        state changes are propagated across the graph until a stable state is
+        reached.
+\end{itemize}
 
 \subsubsection{Code specifics and types}
 
@@ -507,7 +539,7 @@ the \textit{in} variables and one for the \textit{out} variables.
 
 The \textit{Reaching Definitions} analysis, on the other hand, uses the
 \Code{DefSets} structure, which stores the nodes where the assignment occurs by
-reference. This avoids having to keep a separate map in memory to associate
+reference. This avoids having to keep a separate map in memory to assign
 definition nodes a unique identification number.
 
 \subsubsection{Defined Variables and validation}
@@ -536,6 +568,13 @@ helper.
 \Code{exportReachingDefs()} convert the internal graph structures into DOT
 format strings that display the calculated \textit{in} and \textit{out} data
 sets for every single node in the control flow graph.
+
+To generate a DOT graph for a specific analysis, these commands may be executed:
+\begin{verbatim}
+$ ./run.sh miniimp -f code.mi -g -ad  # defined variables
+$ ./run.sh miniimp -f code.mi -g -al  # live variables
+$ ./run.sh miniimp -f code.mi -g -ar  # reaching definitions
+\end{verbatim}
 
 \subsection{Optimization}
 
@@ -588,9 +627,9 @@ even performs simple associative folding, automatically reducing expressions
 like \Code{10 + (20 + x)} directly down to \Code{30 + x}.
 
 I thought of creating a more complex algebraic system to keep track of the
-variables used in the mathematical formulas, so as to simplify expressions such
-as \Code{x + 3 * y + 5 * x + 2 * y} into \Code{6 * x + 5 * y}, but that seemed
-slightly off the scope of the project.
+variable factors used in mathematical formulas, so as to simplify expressions
+such as \Code{x + 3 * y + 5 * x + 2 * y} into \Code{6 * x + 5 * y}, but that
+seemed slightly off the scope of the project.
 
 Unlike DSE, Constant Folding only mutates the inner AST nodes and never alters
 the structural layout of the graph itself.
@@ -625,6 +664,17 @@ passes using a fixpoint iteration loop. It continuously cycles through
 loop only terminates when a full cycle completes without any of the three passes
 reporting a change to the graph or the AST, guaranteeing that the code is as
 optimized as possible before code generation.
+
+\subsubsection{Graph visualization}
+
+The compiler supports generating a DOT graph after optimizations have been
+applied. To do so, the following command is available:
+\begin{verbatim}
+$ ./run.sh miniimp -f code.mi -g -o
+\end{verbatim}
+
+It is possible to use the \texttt{-o} flag together with analysis-specific graph
+generation flags, like \texttt{-ad}.
 
 \subsection{Code generation}
 
@@ -673,7 +723,7 @@ operations are mapped directly to their LLVM equivalent (such as \texttt{add},
 \texttt{sub}, or \texttt{mul}).
 
 For boolean logic, the compiler utilizes \texttt{and}, translates the
-\texttt{not} operator into an \texttt{xor} instruction against the value 1, and
+\texttt{not} operator into a \texttt{xor} instruction against the value 1, and
 evaluates less-than comparisons using the \texttt{icmp slt} opcode.
 
 \subsubsection{Graph traversal and block emission}
