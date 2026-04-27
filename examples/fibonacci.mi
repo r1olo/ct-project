@@ -8,7 +8,6 @@ else (
         a := 0;
         b := 1;
         i := 1;
-        c := test + 5;
 
         while i < n do (
             temp := a + b;

@@ -4,7 +4,6 @@
 # user experience _FLAWLESS_, the run.sh script is used to handle automatic
 # dependency management
 #
-set -e
 
 print() {
     # always print to stderr
@@ -59,10 +58,10 @@ INPUT=$1
 }
 
 # compile and possibly delete temp files
-./run.sh miniimp -f "$INPUT" -c >out.ll
-opt -p=mem2reg out.ll -S -o opt.ll
-llc -filetype=obj opt.ll -o miniimp.o
-clang misc/wrapper.c miniimp.o -o "$OUTPUT"
+./run.sh miniimp -f "$INPUT" -c >out.ll &&
+opt -p=mem2reg out.ll -S -o opt.ll &&
+llc -filetype=obj opt.ll -o miniimp.o &&
+clang misc/wrapper.c miniimp.o -o "$OUTPUT"; RES=$?
 [ "$KEEP" = "n" ] && rm out.ll opt.ll miniimp.o
 
-print "[+] compilation successful. run './$OUTPUT'"
+[ $RES = 0 ] && print "[+] compilation successful. run './$OUTPUT'"
