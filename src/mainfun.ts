@@ -1,5 +1,6 @@
 import * as readline from "readline";
 import * as fs from "fs";
+import { ArgumentParser } from "argparse";
 import parse from "./minifun/parser";
 import execProg from "./minifun/engine";
 import checkProg, { formatType } from "./minifun/validator";
@@ -34,27 +35,25 @@ function evaluateSource(source: string) {
     }
 }
 
-/* cli argument passing */
-const args = process.argv.slice(2);
-let runInteractive = false;
-let filePath: string | undefined = undefined;
-const noFlags = args.length === 0;
+/* create a parser */
+const parser = new ArgumentParser({
+    description: "MiniFun interpreter and interactive environment"
+});
 
-for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-i") {
-        runInteractive = true;
-    } else if (args[i] === "-f") {
-        if (i + 1 < args.length) {
-            filePath = args[++i];
-        } else {
-            console.error("\x1b[31mError: -f flag requires a file path.\x1b[0m");
-            process.exit(1);
-        }
-    }
-}
+/* define available arguments */
+parser.add_argument("-f", "--file", {
+    help: "evaluate the specified source file path"
+});
+parser.add_argument("-i", "--interactive", {
+    action: "store_true",
+    help: "run in interactive REPL mode"
+});
+
+/* parse arguments */
+const args = parser.parse_args();
 
 /* execution flow */
-if (noFlags) {
+if (!args.file && !args.interactive) {
     /* no flags passed: Read entirely from stdin (e.g., piped data),
      * evaluate, and exit */
     let source = "";
@@ -65,18 +64,19 @@ if (noFlags) {
     });
 } else {
     /* file evaluation phase */
-    if (filePath) {
+    if (args.file) {
         try {
-            const source = fs.readFileSync(filePath, "utf8");
+            const source = fs.readFileSync(args.file, "utf8");
             evaluateSource(source.trim());
         } catch (err: any) {
-            console.error(`\x1b[31mError reading file '${filePath}': ${err.message}\x1b[0m`);
+            console.error(`\x1b[31mError reading file '${args.file}': ` +
+                          `${err.message}\x1b[0m`);
             process.exit(1);
         }
     }
 
     /* interactive REPL phase */
-    if (runInteractive) {
+    if (args.interactive) {
         console.log("Welcome to MiniFun's interactive environment.");
         console.log("Copyright 2026-2026 Andrea Riolo Vinciguerra.\n");
         console.log("Type your expression and press Enter to evaluate.");
