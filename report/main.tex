@@ -1,5 +1,6 @@
 \documentclass[12pt]{article}
 \usepackage{amsmath}
+\usepackage{hyperref}
 \usepackage{parskip}
 \usepackage{xurl}
 
@@ -34,8 +35,8 @@ files. For example, the core evaluator (or interpreter) and the Abstract Syntax
 Tree definitions for both compilers are stored in a file called
 \path{engine.ts}. The rest of the functionality builds upon this file. For
 example, MiniImp extends this core engine to construct its control flow graph
-and handle optimizations, while MiniFun supports a complete polymorphic type
-system.
+and generate an intermediate representation, while MiniFun supports a complete
+polymorphic type system.
 
 I chose TypeScript as the programming language for two main reasons. First, I
 wanted the opportunity to master a language I was less familiar with. Secondly,
@@ -94,6 +95,42 @@ For Windows, the last step involves invoking \texttt{node} explicitly, like so:
 $ node dist/miniimp --help  # or node dist/minifun --help
 \end{verbatim}
 
+\subsection{Generating MiniImp executables}
+
+MiniImp's frontend generates basic LLVM intermediate representation, which
+cannot be executed directly. To create a runnable program, this IR must be
+processed by an assembler and a linker.
+
+Before converting the intermediate representation into machine code, it must be
+optimized. This step removes inefficient patterns, such as the \texttt{alloca}
+trick, which is a technique used for simplifying the generation of LLVM IR. This
+is explained in detail in a dedicated section.
+
+To make the compilation process easier for Linux and macOS users, a
+\path{compile.sh} script is provided. For example, to compile a MiniImp file
+named \path{code.mi} into an executable, the following command is used:
+\begin{verbatim}
+$ ./compile.sh code.mi
+\end{verbatim}
+
+The intermediate temporary files are deleted by default, but can be preserved by
+supplying the argument \texttt{-k} before the filename, like so:
+\begin{verbatim}
+$ ./compile.sh -k code.mi
+\end{verbatim}
+
+For manual compilation, standard LLVM tools can be used to generate the final
+\path{miniimp} binary:
+\begin{verbatim}
+$ ./run.sh miniimp -f code.mi -c >out.ll
+$ opt -p=mem2reg out.ll -S -o opt.ll
+$ llc -filetype=obj opt.ll -o miniimp.o
+$ clang misc/wrapper.c miniimp.o -o miniimp
+\end{verbatim}
+
+As an additional note, I modified the C wrapper slightly to allow for the
+arguments to be passed via command line, rather than standard input.
+
 \section{Diagnostics system}
 
 Both compilers share the same diagnostics system, ensuring consistent and
@@ -101,7 +138,7 @@ precise error reporting for the user. The interpreters intentionally bypass this
 system, as runtime evaluation errors represent a failure in code validation
 rather than a user error.
 
-To provide accurate diagnostics, I have made Abstract Syntax Tree nodes track
+To provide accurate diagnostics, I made Abstract Syntax Tree nodes track
 their exact location in the source file using a \Code{SourceSpan}. This
 structure records the starting and ending lines and columns without needing to
 store a copy of the code. When a \Code{DiagnosticError} is thrown, the caller
@@ -109,6 +146,14 @@ invokes its \Code{format} function and passes in the full source code. Using the
 \Code{SourceSpan}, this function derives a detailed, colored error message that
 highlights the exact problem area, along with a clear explanation and any
 helpful additional notes.
+
+As an example, here is the error presented to the user in case they used an
+undefined variable in their code:
+\begin{verbatim}
+Error: undefined variable 'test'
+11 |         c := test + 5;
+                  ^^^^
+\end{verbatim}
 
 %TODO: anyone else?
 The implementation is located in the file \path{src/diag.ts} and the
@@ -134,7 +179,7 @@ at the time of definition and uses it during execution. Because of this, its
 type definition must include both the function's body and the saved environment.
 
 As seen in the grammar of the language, some expressions like \Code{let} or
-\Code{fun} can accept type labels to override automatic type inference. I have
+\Code{fun} can accept type labels to override automatic type inference. I
 made these labels optional, giving users the choice to either specify types
 manually or rely on (and trust) the compiler's type system.
 
@@ -192,7 +237,7 @@ environment $\rho$, but rather to the modified environment $\rho'$.
 
 %TODO
 The type definitions and implementation for MiniFun's type system are located in
-\path{src/minifun/validator.ts}. I have implemented the complete polymorphic
+\path{src/minifun/validator.ts}. I implemented the complete polymorphic
 type system in the slides, which is based on the Hindley-Milner algorithm. The
 whole system revolves around the concept of \textit{monotypes} and
 \textit{polytypes}, each defined in its own structure.
@@ -214,7 +259,7 @@ needed.
 \subsubsection{Context}
 
 Structurally, the type system's context is very similar to the evaluator's
-environment. However, I have modified it to support an iterator operation that
+environment. However, I modified it to support an iterator operation that
 can go through all currently defined identifiers. This makes it easier to apply
 substitutions to the entire context.
 
@@ -257,7 +302,7 @@ relevant (and unbound) type variables.
 \subsubsection{Algorithm W}
 
 The implementation of Algorithm W's inference rules follows the slides exactly.
-However, I have extended these rules to support optional type annotations on
+However, I extended these rules to support optional type annotations on
 \texttt{fun} and \texttt{letfun} statements. When a type label is omitted, the
 compiler relies on the standard inference rules. If a label is provided, the
 system enforces specific type restrictions during the inference process.
@@ -273,11 +318,11 @@ Type transformation functions are implemented exactly as per slides:
         types and making polytypes ``act'' as true templates.
 \end{itemize}
 
-The inference rule for the \texttt{fun} statement is relatively straightforward.
-It simply assigns the supplied type to the argument rather than generating a
-fresh variable:
+The inference rule for the type-labelled \texttt{fun} statement is relatively
+straightforward. It simply assigns the supplied type to the argument rather than
+generating a fresh variable:
 $$
-\text{Fun}\quad
+\text{TFun}\quad
 \frac
 { \Gamma [x \mapsto \tau] \vdash t : \tau',S }
 { \Gamma \vdash \texttt{fun} \; x : \tau \; => \; t : S\tau \rightarrow
@@ -287,7 +332,7 @@ $$
 The \texttt{letfun} statement requires that the type label be enforced during
 unification instead, since we supply the whole function type:
 $$
-\text{LetFun}\quad
+\text{TLetFun}\quad
 \frac
 {
     \begin{array}{c}
@@ -306,12 +351,355 @@ $$
 
 \section{MiniImp: the imperative language}
 
-Work in progress.
+MiniImp is a simple imperative language that works by receiving an input value
+through one variable and expecting the program to save its final result into a
+different variable. The language supports assignments, conditionals, loops and
+sequences.
 
-%block graph has 'merge' block to handle the case where, after an if, there's
-%the end of the program. without 'merge' block, we would have an empty linear
-%block (fake skip is not a command to display). while it has been done mainly
-%for debugging purposes, merge and linear blocks are fundamentally equivalent to
-%each other while encoding the difference needed for SSA-based algorithms.
+\subsection{Abstract Syntax Tree and evaluation}
+
+The definitions for the Abstract Syntax Tree are located in
+\path{src/miniimp/engine.ts}. Unlike MiniFun, the primary building block here is
+a command (represented by the \Code{Cmd} discriminated union). Because of this
+imperative design, evaluating a command does not return a final value. Instead,
+the program operates through side effects, storing its calculations directly in
+memory. Numeric and boolean expressions are used exclusively within assignments
+or as comparisons inside conditional statements.
+
+The \Code{evalCmd()} executes commands step-by-step, updating the memory state
+and evaluating any necessary sub-expressions.
+
+\subsubsection{Memory}
+
+The \Code{Memory} interface serves as the program's runtime environment. Instead
+of creating a new copy of the environment for every step, the system uses a
+single, shared instance throughout the entire evaluation process. This instance
+provides two simple methods for managing data: \Code{update()} and
+\Code{read()}. Trivially, this interface is simply implemented using a standard
+TypeScript map.
+
+\subsection{Control Flow Graph}
+
+To analyze the correctness of MiniImp programs, we cannot rely on a standard
+type-checking system. Because imperative side effects require evaluating all
+potential branching paths, this problem is instead solved using a
+\textit{control flow graph}.
+
+All functions related to generating, exporting and manipulating these graphs are
+located in the file \path{src/miniimp/graph.ts}.
+
+\subsubsection{Minimal graph}
+
+A minimal graph is represented by the \Code{Graph} structure, while individual
+nodes are defined by the \Code{Node} structure. To further restrict operations
+at the type-system level, derived utility types like \Code{ExitNode} are also
+included.
+
+There are three types of nodes: \Code{skip}, \Code{assign} and \Code{cond}. Each
+of these is assigned a specific command from the Abstract Syntax Tree.
+
+The \Code{genGraph()} function inductively generates this minimal graph,
+ensuring that each block contains at most one instruction. A strict invariant is
+maintained throughout this process: every sub-graph must have exactly one entry
+node and one exit node, though these can be the same node.
+
+The algorithm scans the AST and builds a suitable sub-graph for each command
+while carefully preserving the invariant. Finally, these sub-graphs are linked
+together using the \texttt{seq} pseudo-command.
+
+To respect the invariant at all times, the generator may insert extra
+\texttt{skip} commands not present in the user's original code. These are
+referred to internally as "fake skips" and are represented as standard
+\texttt{skip} nodes without an associated AST command.
+
+\subsubsection{Maximal graph}
+
+A maximal graph is represented by the \Code{BlockGraph} structure, with its
+nodes described by the \Code{Block} structure. Rather than generating a maximal
+graph from scratch, I created a helper function called \Code{maximizeGraph()}
+that converts an existing, verified minimal graph into a maximal one.
+
+The structural invariant remains similar, but with an important nuance: the
+distinction between normal command blocks and ``merge'' blocks. A merge block
+functions like a standard block, but specifically incorporates the first "fake
+skip" following the branches of a conditional statement. I introduced this
+primarily to keep debugging visualizations clean, as it prevents the graph from
+generating an empty block when a program ends immediately after an \texttt{if}
+statement. Although merge and standard blocks are functionally equivalent, this
+specific design safely groups sequential commands while guaranteeing a single
+exit block for branching statements.
+
+\subsubsection{Minimal or maximal?}
+
+When determining the ideal graph structure for the compiler, I opted to use the
+minimal graph as the primary format because it significantly simplifies the
+analysis and optimization phases. Since each block contains at most one
+instruction, we can apply straightforward inductive algorithms without needing
+special heuristics or complex inner-block analyses.
+
+Furthermore, generating a minimal graph requires fewer steps and is more
+structural, which is exceptionally good for recursive functions.
+
+However, the graph maximizer remains essential for the code generation phase.
+Grouping instructions into larger blocks allows the compiler to produce clean,
+readable LLVM IR that is not cluttered with superfluous jump instructions.
+Additionally, developing this conversion tool was an excellent exercise for my
+fluency in TypeScript.
+
+\subsubsection{Exporting graphs}
+
+To assist with debugging and development, I created a generic graph-exporting
+helper called \Code{graphToDOT()}. Rather than hardcoding the export logic, this
+routine accepts a set of callback functions as arguments. Each function plays a
+specific role in defining the structure and appearance of the exported graph.
+
+These callback functions include:
+\begin{itemize}
+    \item \Code{labelShape(node)}: determines the DOT format label and visual
+        shape for a given node.
+    \item \Code{isBranching(node)}: identifies whether the node represents a
+        branching point in the control flow.
+    \item \Code{getNext(node)}: retrieves the subsequent node(s). This can
+        return null at an exit, a single node for sequential commands, or an
+        array of two nodes for conditional statements.
+    \item \Code{skipElem(node)}: evaluates whether a node should be omitted from
+        the visual output, which is particularly useful for hiding internal
+        "fake skip" nodes.
+\end{itemize}
+
+Because of this modular design, \Code{graphToDOT()} can be easily adapted by
+creating specific wrappers for different graph types. This flexibility allows
+the compiler to export both minimal and maximal graphs, as well as seamlessly
+attach extra analysis metadata to each node.
+
+\subsection{Graph analysis}
+
+With the generated control flow graph, the compiler must perform data flow
+analysis to extract information about the execution paths. This process is
+needed for both verifying code correctness, such as catching undefined
+variables, and for enabling optimizations.
+
+The logic for these operations is located in the file
+\path{src/miniimp/analysis.ts}.
+
+\subsubsection{The work queue algorithm}
+
+Data flow analysis involves propagating information across the graph until a
+stable fixpoint is reached. To handle this efficiently, I implemented a generic
+\Code{wqAnalyze()} function.
+
+This method uses a queue-based breadth-first search algorithm. It enqueues graph
+nodes and applies a custom local update function to each one. If a node's
+internal state changes during this update, its neighboring nodes (either
+successors or predecessors, depending on the direction of the analysis) are
+added back to the work queue.
+
+The \Code{wqAnalyze()} generic wrapper reduced code duplication when
+implementing multiple distinct analyses.
+
+\subsubsection{Code specifics and types}
+
+All the analyses work by assigning a special structure to each graph node via a
+standard TypeScript map. For the \textit{Defined} and \textit{Live Variables}
+analyses, the structure \Code{VarSets} is used (aliased to \Code{DefinedVars}
+and \Code{LiveVars}, respectively), which is a pair of identifier sets: one for
+the \textit{in} variables and one for the \textit{out} variables.
+
+The \textit{Reaching Definitions} analysis, on the other hand, uses the
+\Code{DefSets} structure, which stores the nodes where the assignment occurs by
+reference. This avoids having to keep a separate map in memory to associate
+definition nodes a unique identification number.
+
+\subsubsection{Defined Variables and validation}
+
+The function \Code{analyzeDefinedVars()} handles the most critical analysis, the
+\textit{Defined Variables}. Using the output from this process,
+\Code{checkUndefined()} scrubs the graph to ensure that no command ever attempts
+to read a variable before it has been assigned a value. If an uninitialized
+variable is detected, the validation process fails and the compiler throws a
+\Code{DiagnosticError} with the precise location of the error in the source
+code.
+
+\subsubsection{Live Variables and Reaching Definitions}
+
+The \textit{Live Variables} and \textit{Reaching Definitions} analyses are
+handled by two other functions: \Code{analyzeLiveVars()} and
+\Code{analyzeReaching()}. These match the specifications in the slide exactly.
+
+\subsubsection{Graph visualization}
+
+To aid in debugging and verify the correctness of the analyses' logic, the
+module includes two wrappers of the generic \Code{graphToDOT()} graph exporting
+helper.
+
+\Code{exportDefinedVars()}, \Code{exportLiveVars()} and
+\Code{exportReachingDefs()} convert the internal graph structures into DOT
+format strings that display the calculated \textit{in} and \textit{out} data
+sets for every single node in the control flow graph.
+
+\subsection{Optimization}
+
+Once analyses have been performed on the control flow graph, the compiler enters
+the optimization phase. The goal of this step is to produce a more efficient
+graph by stripping away redundant instructions and pre-calculating predictable
+values at compile time, before handing off the final result to the code
+generation phase.
+
+The optimization logic is housed in \path{src/miniimp/opt.ts} and consists of
+three distinct passes that work together to simplify the graph.
+
+\subsubsection{Dead Store Elimination}
+
+\textit{Dead Store Elimination} is a structural optimization that removes
+useless assignments from the code. The pass is implemented in the \Code{dse()}
+function according to the slides, and relies on the \textit{Live Variables}
+analysis.
+
+The algorithm iterates through all the nodes in the control flow graph. If it
+encounters an \Code{assign} node, it checks the \Code{liveOut} set for that
+block. If the assigned variable does not appear in the \textit{out} set, it
+means that the variable is never read by any subsequent instruction. Therefore,
+the assignment is completely redundant and can be safely deleted.
+
+Once again, the advantage of using a minimal graph is evident: because a graph
+node can only contain one instruction, there's at most one assigned variable for
+every single node.
+
+Because removing a node structurally alters the graph, the predecessor and
+successor links must be re-routed to avoid breaking the graph's invariants.
+After a successful deletion, the graph is permanently changed, meaning the data
+flow maps are now stale. Therefore, as seen in the code's comments, the DSE pass
+requires that all analyses be re-run, and the pass repeats until no further dead
+stores are found.
+
+\subsubsection{Constant Folding}
+
+\textit{Constant Folding} is a local optimization that simplifies expressions
+before runtime. The \Code{constFold()} function traverses both numeric and
+boolean expressions within the Abstract Syntax Tree.
+
+When the compiler detects an operation involving only raw literal values, it
+evaluates the result immediately and replaces the entire sub-tree with a single
+value node.
+
+The numeric folding logic incorporates arithmetic identities, such as stripping
+away \Code{x + 0} or \Code{x * 1}, and converting \Code{x * 0} to \Code{0}. It
+even performs simple associative folding, automatically reducing expressions
+like \Code{10 + (20 + x)} directly down to \Code{30 + x}.
+
+I thought of creating a more complex algebraic system to keep track of the
+variables used in the mathematical formulas, so as to simplify expressions such
+as \Code{x + 3 * y + 5 * x + 2 * y} into \Code{6 * x + 5 * y}, but that seemed
+slightly off the scope of the project.
+
+Unlike DSE, Constant Folding only mutates the inner AST nodes and never alters
+the structural layout of the graph itself.
+
+\subsubsection{Constant Propagation}
+
+\textit{Constant Propagation} complements Constant Folding by replacing
+variables with their known literal values. It is implemented via
+\Code{constProp()} and follows the slides exactly, leveraging the
+\textit{Reaching Definitions} analysis.
+
+Whenever an expression uses a variable, the compiler checks the \textit{in} set
+of reaching definitions for that specific node. If there is exactly one
+assignment reaching the node, and that assignment sets the variable to a raw
+literal value, the compiler replaces the variable reference with the literal
+itself.
+
+Similarly to DSE, executing this replacement alters variable usage throughout
+the graph, requiring data flow maps to be recalculated before the next pass.
+
+\subsubsection{The optimization loop}
+
+These three passes work side by side to provide an ultimately optimized graph.
+For example, applying Constant Propagation might expose new literal values that
+can be squashed together via Constant Folding. This folded constant might then
+cause a previously useful variable to become obsolete, triggering Dead Store
+Elimination.
+
+To maximize efficiency, the main \Code{optimize()} function orchestrates these
+passes using a fixpoint iteration loop. It continuously cycles through
+\Code{doDSE()}, \Code{doConstFold()} and \Code{doConstProp()} in sequence. The
+loop only terminates when a full cycle completes without any of the three passes
+reporting a change to the graph or the AST, guaranteeing that the code is as
+optimized as possible before code generation.
+
+\subsection{Code generation}
+
+The final phase of the compiler is to translate the verified and optimized
+control flow graph into an intermediate representation. The choice of the
+project is to rely on LLVM for it.
+
+The entry point for this is the \Code{codegen()} function. Before emitting any
+code, the compiler guarantees correctness by running the validation and
+optimization passes, and then uses the \Code{maximizeGraph()} helper to group
+the minimal nodes into larger basic blocks, which is ideal for LLVM IR
+generation as seen previously.
+
+\subsubsection{Variable allocation and the \texttt{alloca} trick}
+
+A difficult problem when generating LLVM IR directly is adhering to its strict
+\textit{Static Single Assignment} form, which requires the complex calculation
+of \textit{phi} nodes for variables that change values across different control
+flow branches. While the maximal graph may come in handy for this specific type
+of problem, I ultimately decided to bypass this and implement what is commonly
+known as the \texttt{alloca} trick, as advised in the slides. This is used for
+example by the Rust compiler as well.
+
+By invoking the \Code{extractAllVars()} helper, the compiler identifies every
+unique identifier used throughout the program, including input, outputs and
+intermediate variables. At the very beginning of the LLVM function definition, a
+dedicated memory slot of the stack is allocated for each of these variables
+using the \texttt{alloca} instruction.
+
+This architecture allows the rest of the generated code to safely update
+variables using standard \texttt{load} and \texttt{store} operations, deferring
+the SSA conversion to LLVM's external \texttt{mem2reg} optimization pass.
+
+\subsubsection{Expression translation}
+
+To translate individual operations into machine-level instructions, the compiler
+relies on two recursive helper functions: \Code{genNumExpr()} for aritmetic and
+\Code{genBoolExpr()} for boolean logic.
+
+These functions behave very similarly to the interpreter found in the
+\path{engine.ts} module, traversing the expression trees bottom-up. For every
+sub-expression evaluated, the compiler allocates a new, sequentially numbered
+temporary LLVM register (e.g., \texttt{\%1}, \texttt{\%2}). Variables are loaded
+from their stack pointers into these temporary registers, and mathematical
+operations are mapped directly to their LLVM equivalent (such as \texttt{add},
+\texttt{sub}, or \texttt{mul}).
+
+For boolean logic, the compiler utilizes \texttt{and}, translates the
+\texttt{not} operator into an \texttt{xor} instruction against the value 1, and
+evaluates less-than comparisons using the \texttt{icmp slt} opcode.
+
+\subsubsection{Graph traversal and block emission}
+
+The final structure of the LLVM IR is constructed using a depth-first search
+algorithm over the maximal graph, implemented via the \Code{traverse()} inner
+function. As the routine visits each block, it assigns a unique label (such as
+\texttt{block\_0}) to define a proper LLVM basic block.
+
+Within each block, sequential assignment commands are evaluated, and their
+resulting temporary registers are stored directly into stack memory. For
+conditional blocks, the resulting condition value is stored into a register,
+which is then used in the conditional \texttt{br} instruction.
+
+In LLVM, every basic block must strictly terminate with a branching or returning
+instruction. The \texttt{traverse()} crawler handles this dynamically based on
+the block's type:
+\begin{itemize}
+    \item \textbf{Conditional blocks} evaluate their boolean condition and emit
+        a conditional branch instruction (\texttt{br i1}) tat jumps to either
+        the true or false block labels.
+    \item \textbf{Standard blocks} that have a subsequent step emit an
+        unconditional branch (\texttt{br}) to their single successor node.
+    \item \textbf{Exit blocks} load the final computed value from the program's
+        designated output variable and emit a \texttt{ret} instruction to return
+        that integer to the caller.
+\end{itemize}
 
 \end{document}
