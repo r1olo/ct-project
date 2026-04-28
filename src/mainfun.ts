@@ -60,7 +60,8 @@ if (!args.file && !args.interactive) {
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", chunk => source += chunk);
     process.stdin.on("end", () => {
-        if (source.trim()) evaluateSource(source.trim());
+        if (source.trim())
+            evaluateSource(source.trim());
     });
 } else {
     /* file evaluation phase */

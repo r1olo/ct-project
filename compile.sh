@@ -16,29 +16,34 @@ if [ ! -f "run.sh" ]; then
     exit 1
 fi
 
-OUTPUT="a.out"
+OUTPUT=a.out
 KEEP=n
 
 usage() {
     print "usage: $0 [-o output] [-k] <input_file.mi>"
-    print "  -o    Specify the output executable name"
-    print "  -k    Keep temporary files for inspection"
-    exit 1
+    print "  -o          Specify the output executable name"
+    print "  -O1, -O2    Optimize with clang"
+    print "  -k          Keep temporary files for inspection"
 }
 
-while getopts "o:h:k" opt; do
+while getopts "o:hkO:" opt; do
     case $opt in
+        O)
+            OPT=-O$OPTARG
+            ;;
         o)
             OUTPUT=$OPTARG
             ;;
         h)
             usage
+            exit 0
             ;;
         k)
             KEEP=y
             ;;
         \?)
             usage
+            exit 1
             ;;
     esac
 done
@@ -50,6 +55,7 @@ INPUT=$1
 [ -z "$INPUT" ] && {
     print "error: no compilation input file specified"
     usage
+    exit 1
 }
 [ ! -f "$INPUT" ] && {
     print "error: input file '$INPUT' does not exist or is not a regular file"
@@ -59,8 +65,8 @@ INPUT=$1
 # compile and possibly delete temp files
 ./run.sh miniimp -f "$INPUT" -c >out.ll &&
 opt -p=mem2reg out.ll -S -o opt.ll &&
-llc -filetype=obj opt.ll -o miniimp.o &&
-clang misc/wrapper.c miniimp.o -o "$OUTPUT"; RES=$?
-[ $KEEP = n ] && rm out.ll opt.ll miniimp.o
+llc ${OPT:+"$OPT"} -filetype=obj opt.ll -o miniimp.o &&
+clang ${OPT:+"$OPT"} misc/wrapper.c miniimp.o -o "$OUTPUT"; RES=$?
+[ $KEEP = n ] && rm -f out.ll opt.ll miniimp.o
 
 [ $RES = 0 ] && print "[+] compilation successful. run './$OUTPUT'"
