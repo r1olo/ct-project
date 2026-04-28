@@ -626,6 +626,11 @@ away \Code{x + 0} or \Code{x * 1}, and converting \Code{x * 0} to \Code{0}. It
 even performs simple associative folding, automatically reducing expressions
 like \Code{10 + (20 + x)} directly down to \Code{30 + x}.
 
+The functions responsible for the folding are \Code{foldNumExpr()} and
+\Code{foldBoolExpr()}. These return a \Code{MergeResult} object, which contains
+the final expression and whether it is different from the original. This
+information is needed because the AST node may or may not be the same.
+
 I thought of creating a more complex algebraic system to keep track of the
 variable factors used in mathematical formulas, so as to simplify expressions
 such as \Code{x + 3 * y + 5 * x + 2 * y} into \Code{6 * x + 5 * y}, but that
