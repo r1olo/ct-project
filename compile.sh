@@ -3,7 +3,6 @@
 # this script will compile a miniimp program using the frontend. to make
 # user experience _FLAWLESS_, the run.sh script is used to handle automatic
 # dependency management
-#
 
 print() {
     # always print to stderr
@@ -62,6 +61,6 @@ INPUT=$1
 opt -p=mem2reg out.ll -S -o opt.ll &&
 llc -filetype=obj opt.ll -o miniimp.o &&
 clang misc/wrapper.c miniimp.o -o "$OUTPUT"; RES=$?
-[ "$KEEP" = "n" ] && rm out.ll opt.ll miniimp.o
+[ $KEEP = n ] && rm out.ll opt.ll miniimp.o
 
 [ $RES = 0 ] && print "[+] compilation successful. run './$OUTPUT'"

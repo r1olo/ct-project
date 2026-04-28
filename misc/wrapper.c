@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int64_t out = miniimp(atoll(argv[1]));
-    printf("%ld\n", out);
+    int64_t input = miniimp(atoll(argv[1]));
+    printf("%ld\n", input);
     return 0;
 }
