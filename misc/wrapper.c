@@ -9,8 +9,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "usage: %s <input>\n", argv[0]);
         return 1;
     }
-
-    int64_t input = miniimp(atoll(argv[1]));
-    printf("%ld\n", input);
+    printf("%ld\n", miniimp(atoll(argv[1])));
     return 0;
 }
