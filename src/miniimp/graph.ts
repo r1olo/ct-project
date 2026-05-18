@@ -264,7 +264,7 @@ export function exportBlockGraph(graph: BlockGraph,
             /* adjust shape */
             if (block.type === "cond") {
                 labelStrings.push(`(${stringifyBool(block.cond.cond)})?`);
-                if (block.cond.type == "while")
+                if (block.cond.type === "while")
                     shape = "diamond";
             } else if (block.type === "merge" && showSkip) {
                 labelStrings.unshift("skip");
