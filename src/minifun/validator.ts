@@ -128,34 +128,26 @@ function applySubstCtx(s: Substitution, ctx: Context): Context {
 /* return a composited substitution by chaining multiple substitutions.
  * example: composeSubst(s4, s3, s2, s1) = s4(s3(s2(s1))) */
 function composeSubst(...substs: Substitution[]): Substitution {
-    /* base cases: nothing to compose */
+    /* if there are no elements, return the empty set */
     if (substs.length === 0)
         return emptySubst;
-    if (substs.length === 1)
-        return substs[0]!;
 
-    /* grab first two substitutions in the chain */
-    let s2 = substs[0]!;
-    let s1 = substs[1]!;
-    let ret: Substitution = new Map();
+    /* reduce this array left to right */
+    return substs.reduce((s2, s1) => {
+        let ret: Substitution = new Map();
 
-    /* first add S1 substitutions "substituted" by S2 */
-    for (const [k, v] of s1.entries())
-        ret.set(k, applySubstMono(s2, v));
+        /* first add S1 substitutions "substituted" by S2 */
+        for (const [k, v] of s1.entries())
+            ret.set(k, applySubstMono(s2, v));
 
-    /* add the remaining S2 substitutions as they are */
-    for (const [k, v] of s2.entries()) {
-        if (!ret.has(k))
-            ret.set(k, v);
-    }
+        /* add the remaining S2 substitutions as they are */
+        for (const [k, v] of s2.entries()) {
+            if (!ret.has(k))
+                ret.set(k, v);
+        }
 
-    /* if we only had two, we are done */
-    if (substs.length === 2)
         return ret;
-
-    /* recursively fold the newly composed substitution with the rest
-     * of the chain */
-    return composeSubst(ret, ...substs.slice(2));
+    })
 }
 
 /* get all the free variables in a monotype. all type variables are free
