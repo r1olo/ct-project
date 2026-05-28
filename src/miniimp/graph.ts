@@ -138,10 +138,10 @@ export function graphToDOT<T>(args: DOTArgs<T>): string {
         return elem;
     }
 
-    /* preallocate and insert START and END nodes */
+    /* preallocate and insert BEGIN and END nodes */
     let startId = idCounter++;
     let endId = idCounter++;
-    lines.push(`  n${startId} [label="START", shape=oval];`);
+    lines.push(`  n${startId} [label="BEGIN", shape=oval];`);
     lines.push(`  n${endId} [label="END", shape=oval];`);
 
     /* dfs helper that will traverse the graph, will add lines to the DOT
@@ -198,7 +198,7 @@ export function graphToDOT<T>(args: DOTArgs<T>): string {
         return id;
     }
 
-    /* link START node to the first resolved node or directly to END, if the
+    /* link BEGIN node to the first resolved node or directly to END, if the
      * first node resolves to nothing (example: a graph full of blocks
      * with one skip) */
     let firstBlock = resolveBlock(args.entry);
