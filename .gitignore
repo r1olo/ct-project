@@ -10,4 +10,5 @@ a.out
 *.log
 *.toc
 *.pdf
+!REPORT.pdf
 *.out
