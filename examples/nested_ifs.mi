@@ -1,0 +1,11 @@
+def main with input n output n as
+x := 0;
+while x < 20 do
+    if x < 20 then
+        if x < 10 then (
+            x := x + 1;
+            n := n + 1
+        ) else
+            n := n * 2
+    else
+        x := x + 1

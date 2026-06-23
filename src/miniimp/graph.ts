@@ -339,12 +339,13 @@ export function maximizeGraph(graph: Graph): BlockGraph {
     function traverse(node: Node,
                       block: LinearBlock | MergeBlock = getLinearBlock())
                       : [Block, Block?] {
-        /* return a wrapped block. if we are carrying commands, we must
-         * return our current block but set its next pointer to the target.
-         * if we are not carrying commands, it is useless to put an empty
-         * block in front of the target */
+        /* return a wrapped block. if we are carrying commands, we must return
+         * our current block but set its next pointer to the target. this
+         * _always_ applies to merge blocks, given that they carry at least the
+         * fake skip command. if we are not carrying commands, it is useless to
+         * put an empty block in front of the target. */
         const wrappedBlock = (target: Block) => {
-            if (block.ast.length === 0)
+            if (block.ast.length === 0 && block.type !== "merge")
                 return target;
             block.next = target;
             return block;
